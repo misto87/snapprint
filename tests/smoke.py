@@ -202,7 +202,16 @@ def main() -> int:
                     return f"inspect painted={meta.get('painted')} slots={len(meta['slots'])}"
                 tc = toolchanges(gcode)
                 if tc != set(tools):
-                    return f"expected tools {sorted(tools)}, got {sorted(tc)} · {gcode_facts(gcode)}"
+                    prepared = gcode.parent.parent / "prepared.3mf"
+                    dump = ""
+                    if prepared.exists():
+                        with zipfile.ZipFile(prepared) as zf:
+                            ms = zf.read("Metadata/model_settings.config").decode(errors="replace")
+                            ps = json.loads(zf.read("Metadata/project_settings.config"))
+                        keys = {k: v for k, v in ps.items() if re.search(r"filament_map|extruder_id|filament_settings_id|filament_colour$", k)}
+                        flat = re.sub(r"\s+", " ", ms)[:1500]
+                        dump = f"\nmodel_settings: {flat}\nproject: {keys}"
+                    return f"expected tools {sorted(tools)}, got {sorted(tc)} · {gcode_facts(gcode)}{dump}"
                 return None
             return check
 
