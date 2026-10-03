@@ -236,7 +236,6 @@ class JobManager:
             "--datadir", str(self.orca_home),
             "--load-settings", f"{machine};{process}",
             "--load-filaments", ";".join(str(p) for p in fil_paths),
-            "--allow-newer-file",
             "--outputdir", str(out),
             "--slice", str(job["plate"] if job["kind"] == "3mf" else 0),
             "--export-3mf", "result.3mf",
