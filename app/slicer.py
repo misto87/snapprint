@@ -257,7 +257,7 @@ class JobManager:
         else:
             # The CLI reports an internal version (01.10.x) older than the 3MF files
             # written by current Snapmaker Orca / Bambu Studio releases.
-            cmd += ["--allow-newer-file", "1"]
+            cmd += ["--allow-newer-file"]
         if job["arrange"]:
             cmd += ["--arrange", "1"]
         cmd.append(str(model))
