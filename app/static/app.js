@@ -178,8 +178,8 @@ async function onFile() {
       $("model-info").textContent = `Die 3MF nutzt ${up.slots.length} Filamente – der U1 hat nur 4 Toolheads.`;
       return;
     }
-    $("row-arrange").classList.remove("hidden");
-    $("chk-arrange").checked = up.kind === "stl";
+    $("row-arrange").classList.toggle("hidden", up.kind !== "stl");
+    $("chk-arrange").checked = true;
     $("row-plate").classList.toggle("hidden", up.plates <= 1);
     $("sel-plate").replaceChildren(...Array.from({ length: up.plates }, (_, i) => el("option", { value: i + 1 }, `Platte ${i + 1}`)));
     renderSlots();

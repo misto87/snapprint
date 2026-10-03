@@ -12,6 +12,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from . import threemf
 from .profiles import Profiles
 from .util import parse_gcode_stats, sanitize_gcode_name
 
@@ -150,7 +151,8 @@ class JobManager:
             "id": job_id, "state": "queued", "created": time.time(), "message": "",
             "upload_id": meta["upload_id"], "source_name": meta["filename"], "kind": meta["kind"],
             "machine": machine, "process": process, "filaments": filaments, "toolhead": toolhead,
-            "plate": plate, "arrange": bool(req.get("arrange", meta["kind"] == "stl")),
+            # Arranging 3MF projects hits another GUI-only code path in the CLI.
+            "plate": plate, "arrange": meta["kind"] == "stl" and bool(req.get("arrange", True)),
             "gcode_name": sanitize_gcode_name(meta["filename"]), "stats": {}, "sent_as": None,
         }
         (self.jobs_dir / job_id).mkdir()
@@ -228,6 +230,11 @@ class JobManager:
 
     def build_command(self, job: dict, workdir: Path) -> list:
         model = next(workdir.glob("model.*"))
+        if job["kind"] == "3mf":
+            prepared = workdir / "prepared.3mf"
+            info = threemf.prepare(model, prepared, job["plate"])
+            log.info("job %s: 3mf prepared %s", job["id"], info)
+            model = prepared
         machine = self.profiles.path("machine", job["machine"])
         process = self.process_file(workdir, job["process"], job["machine"])
         fil_paths = []
@@ -249,7 +256,7 @@ class JobManager:
             "--load-settings", f"{machine};{process}",
             "--load-filaments", ";".join(str(p) for p in fil_paths),
             "--outputdir", str(out),
-            "--slice", str(job["plate"] if job["kind"] == "3mf" else 0),
+            "--slice", "0",
             "--export-3mf", "result.3mf",
         ]
         if job["kind"] == "stl":
