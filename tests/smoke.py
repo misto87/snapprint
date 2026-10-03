@@ -117,6 +117,10 @@ def gdb_backtrace(title: str, jm: JobManager, job: dict) -> None:
 
 
 def main() -> int:
+    gl = subprocess.run(["xvfb-run", "-a", "-s", "-screen 0 1280x1024x24", "sh", "-c",
+                         "glxinfo -B 2>&1 | grep -E 'renderer|OpenGL version|direct rendering' || true"],
+                        capture_output=True, text=True, timeout=120)
+    annotate("notice", "OpenGL under Xvfb", (gl.stdout + gl.stderr).strip()[:600] or "no output")
     probe = subprocess.run(["xvfb-run", "-a", ORCA_BIN, "--help"], capture_output=True, text=True, timeout=180)
     out = (probe.stdout + probe.stderr).strip()
     annotate("notice" if probe.returncode == 0 else "warning", "Orca CLI --help",

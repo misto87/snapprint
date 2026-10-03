@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgtk-3-0t64 libwebkit2gtk-4.1-0 libgl1 libglu1-mesa libegl1 libgl1-mesa-dri libosmesa6 \
         libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 gstreamer1.0-plugins-base \
         libsecret-1-0 libnotify4 libsm6 libxkbcommon0 libdbus-1-3 fonts-dejavu-core \
+        libglx-mesa0 libxrandr2 libxinerama1 libxcursor1 libxi6 libxxf86vm1 libx11-xcb1 mesa-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and unpack the official Snapmaker Orca AppImage (no FUSE needed at runtime).
