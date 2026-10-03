@@ -174,16 +174,27 @@ def main() -> int:
         hits = [l for l in lines if l.startswith(";")
                 and re.search(r"estimated|total filament|printing time|filament used \[", l, re.I)]
         annotate("notice", "G-code summary lines", "\n".join(hits[:25]))
-    t3 = run("STL on T3", cube, {"filaments": [{"name": pla}], "toolhead": 2}, check_stl(2))
+    run("STL on T3", cube, {"filaments": [{"name": pla}], "toolhead": 2}, check_stl(2))
 
-    # Realistic 3MF projects: derived from the project 3MF Snapmaker Orca itself wrote
-    # for the T3 job (full project_settings, plate data, 3 filament slots).
-    source = jm.jobs_dir / t3["id"] / "out" / "result.3mf" if t3 else None
-    if not source or not source.exists():
+    # Realistic 3MF projects: let Snapmaker Orca write a project 3MF with three
+    # different filament presets (full project_settings, plate data), then derive cases.
+    names = [n for n in ("Generic PLA", "Generic PLA Silk", "Generic PLA High Speed")
+             if n in profiles._by_kind["filament"]] or [pla]
+    names = (names * 3)[:3]
+    projdir = work / "project"
+    projdir.mkdir()
+    cmd = ["xvfb-run", "-a", ORCA_BIN, "--datadir", str(work / "orca"),
+           "--load-settings", f"{profiles.path('machine', MACHINE)};{jm.process_file(projdir, process, MACHINE)}",
+           "--load-filaments", ";".join(str(profiles.path("filament", n)) for n in names),
+           "--load-filament-ids", "1", "--arrange", "1", "--slice", "0",
+           "--outputdir", str(projdir), "--export-3mf", "project.3mf", str(cube)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    source = projdir / "project.3mf"
+    if not source.exists():
         failures += 1
-        annotate("error", "3MF tests", "no result.3mf from the STL job to derive projects from")
+        annotate("error", "3MF tests", "could not create project 3MF: " + (proc.stdout + proc.stderr)[-1500:])
     else:
-        fils = [{"name": pla, "color": c} for c in ("#E72F1D", "#1E88E5", "#FCE94F")]
+        fils = [{"name": n, "color": c} for n, c in zip(names, ("#E72F1D", "#1E88E5", "#FCE94F"))]
 
         def expect(tools, painted=None):
             def check(gcode, meta):

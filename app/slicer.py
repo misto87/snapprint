@@ -12,7 +12,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import threemf
+from . import paint, threemf
 from .profiles import Profiles
 from .util import parse_gcode_stats, sanitize_gcode_name
 
@@ -59,24 +59,29 @@ def inspect_model(path: Path) -> dict:
                 break
         used = {int(v) for v in re.findall(r'key="extruder" value="(\d+)"', model_cfg)}
         plates = max(1, len(re.findall(r"<plate>", model_cfg)))
-        painted = False
+        painted_states = set()
         for n in names:
             if n.startswith("3D/") and n.endswith(".model"):
-                with zf.open(n) as fh:
-                    chunk = fh.read(64 * 1024 * 1024)
-                if b"paint_color=" in chunk or b"mmu_segmentation=" in chunk:
-                    painted = True
-                    break
-    count = max(len(colours), max(used) if used else 0, 1)
+                if zf.getinfo(n).file_size > 512 * 1024 * 1024:
+                    raise ValueError("Die 3MF ist zu groß")
+                data = zf.read(n)
+                if b"paint_color=" in data or b"mmu_segmentation=" in data:
+                    painted_states |= paint.used_paint_states(data)
+    painted = bool(painted_states)
+    used |= painted_states
+    used = used or {1}
+    count = max(len(colours), max(used), 1)
     slots = []
     for i in range(count):
         slots.append({
             "color": colours[i] if i < len(colours) else "",
             "type": types[i] if i < len(types) else "",
             "name": ids[i] if i < len(ids) else "",
+            "used": (i + 1) in used,
         })
+    # Filament n prints on toolhead Tn, so only filaments 1-4 may actually be used.
     return {"kind": "3mf", "slots": slots, "plates": plates, "painted": painted,
-            "too_many": count > MAX_TOOLHEADS}
+            "too_many": max(used) > MAX_TOOLHEADS}
 
 
 class JobManager:
@@ -130,7 +135,7 @@ class JobManager:
         self.profiles.check_compatible("process", process, machine)
         if meta["kind"] == "3mf":
             if meta.get("too_many"):
-                raise ValueError(f"Die 3MF nutzt {len(meta['slots'])} Filamente, der U1 hat nur 4 Toolheads")
+                raise ValueError("Die 3MF nutzt Filamente über Nr. 4 hinaus – der U1 hat nur T1–T4")
             if len(filaments) != len(meta["slots"]):
                 raise ValueError("Für jede Farbe der 3MF muss ein Filament gewählt werden")
             toolhead = None

@@ -124,6 +124,7 @@ function renderSlots() {
       el("div", { className: "warn", id: "warn-0" })));
   } else {
     up.slots.forEach((s, i) => {
+      if (!s.used) return;
       const h = heads[i] && heads[i].filament;
       box.append(el("div", { className: "slot" },
         el("div", { className: "slot-head" },
@@ -170,12 +171,13 @@ async function onFile() {
     const up = await api("uploads", { method: "POST", body: fd });
     state.upload = up;
     $("file-label").textContent = file.name;
-    let info = up.kind === "stl" ? "STL · wird einfarbig gedruckt" : `3MF · ${up.slots.length} Farbe(n)`;
+    const usedCount = up.slots.filter((s) => s.used).length;
+    let info = up.kind === "stl" ? "STL · wird einfarbig gedruckt" : `3MF · ${usedCount} Farbe(n)` + (up.painted ? " · bemalt" : "");
     if (up.kind === "3mf" && up.plates > 1) info += ` · ${up.plates} Platten`;
-    if (up.kind === "3mf" && up.slots.length > 1 && !up.painted) info += " · Farben pro Objekt zugewiesen";
+    if (up.kind === "3mf" && usedCount > 1 && !up.painted) info += " · Farben pro Objekt zugewiesen";
     $("model-info").textContent = info;
     if (up.too_many) {
-      $("model-info").textContent = `Die 3MF nutzt ${up.slots.length} Filamente – der U1 hat nur 4 Toolheads.`;
+      $("model-info").textContent = "Die 3MF nutzt Filamente über Nr. 4 hinaus – der U1 hat nur T1–T4.";
       return;
     }
     $("row-arrange").classList.toggle("hidden", up.kind !== "stl");
@@ -195,11 +197,13 @@ async function onSlice() {
   const up = state.upload;
   const n = up.kind === "stl" ? 1 : up.slots.length;
   const filaments = [];
+  const firstUsed = up.kind === "3mf" ? Math.max(0, up.slots.findIndex((s) => s.used)) : 0;
   for (let i = 0; i < n; i++) {
+    const sel = $(`fil-${i}`) || $(`fil-${firstUsed}`);  // unused slots: any compatible profile
     let color = up.kind === "3mf" ? up.slots[i].color : "";
     const head = state.printer && state.printer.toolheads[headFor(i)];
     if (!color && head && head.filament.loaded) color = head.filament.color;
-    filaments.push({ name: $(`fil-${i}`).value, color });
+    filaments.push({ name: sel.value, color });
   }
   const req = {
     upload_id: up.upload_id, machine: machineName(), process: $("sel-process").value, filaments,
@@ -278,7 +282,7 @@ function onStart() {
     (job.stats && job.stats.print_time ? ` (ca. ${job.stats.print_time})` : "") + ".";
   const items = job.kind === "stl"
     ? [`T${job.toolhead + 1}: ${job.filaments[0].name}`]
-    : job.filaments.map((f, i) => `T${i + 1}: ${f.name}`);
+    : job.filaments.map((f, i) => (state.upload.slots[i] && !state.upload.slots[i].used) ? null : `T${i + 1}: ${f.name}`).filter(Boolean);
   $("confirm-heads").replaceChildren(...items.map((t) => el("li", {}, t)));
   const dlg = $("dlg-confirm");
   dlg.returnValue = "";
