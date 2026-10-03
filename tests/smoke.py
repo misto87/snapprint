@@ -63,6 +63,10 @@ def toolchanges(gcode: Path) -> set:
 
 
 def main() -> int:
+    probe = subprocess.run(["xvfb-run", "-a", ORCA_BIN, "--help"], capture_output=True, text=True, timeout=180)
+    out = (probe.stdout + probe.stderr).strip()
+    annotate("notice" if probe.returncode == 0 else "warning", "Orca CLI --help",
+             f"exit {probe.returncode}\n{out[:600]}\n...\n{out[-800:]}")
     profiles = Profiles()
     process = profiles.default_process(MACHINE)
     pla = "Generic PLA" if "Generic PLA" in profiles._by_kind["filament"] else profiles.index["filaments"][0]["name"]
@@ -142,4 +146,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        import traceback
+        annotate("error", "Smoke test crashed", traceback.format_exc()[-3000:])
+        sys.exit(1)
