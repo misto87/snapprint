@@ -189,7 +189,9 @@ def main() -> int:
             pngs = [n for n in zipfile.ZipFile(r3).namelist() if n.endswith(".png")] if r3.exists() else "no result.3mf"
             heads = [l for l in text.splitlines()[:60] if "thumbnail" in l.lower()][:5]
             log = (gcode.parent.parent / "slicer.log").read_text(errors="replace").splitlines()
-            gl = [l[-200:] for l in log if re.search(r"thumbnail|glfw|opengl|glx|mesa|GL_|framebuffer", l, re.I)][:12]
+            idx = next((i for i, l in enumerate(log) if "init opengl failed" in l), len(log))
+            gl = [re.sub(r"^\[[^\]]*\] \[[^\]]*\] ", "", l)[-220:] for l in log[max(0, idx - 14):idx + 1]
+                  if "[trace]" not in l]
             problems.append(f"no PNG thumbnail (3mf pngs: {pngs}; gcode thumb lines: {heads})\nlog: " + "\n".join(gl))
         return "; ".join(problems) or None
     run("STL with settings overrides", cube, {
