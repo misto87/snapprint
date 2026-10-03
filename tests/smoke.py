@@ -188,7 +188,9 @@ def main() -> int:
             r3 = gcode.parent / "result.3mf"
             pngs = [n for n in zipfile.ZipFile(r3).namelist() if n.endswith(".png")] if r3.exists() else "no result.3mf"
             heads = [l for l in text.splitlines()[:60] if "thumbnail" in l.lower()][:5]
-            problems.append(f"no PNG thumbnail (3mf pngs: {pngs}; gcode thumb lines: {heads})")
+            log = (gcode.parent.parent / "slicer.log").read_text(errors="replace").splitlines()
+            gl = [l[-200:] for l in log if re.search(r"thumbnail|glfw|opengl|glx|mesa|GL_|framebuffer", l, re.I)][:12]
+            problems.append(f"no PNG thumbnail (3mf pngs: {pngs}; gcode thumb lines: {heads})\nlog: " + "\n".join(gl))
         return "; ".join(problems) or None
     run("STL with settings overrides", cube, {
         "filaments": [{"name": pla, "overrides": {"nozzle_temperature": "215"}}], "toolhead": 0,
