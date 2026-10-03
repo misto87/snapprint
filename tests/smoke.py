@@ -62,41 +62,6 @@ def toolchanges(gcode: Path) -> set:
     return set(re.findall(r"^T(\d+)\s*$", gcode.read_text(errors="replace"), re.M))
 
 
-def ladder(work: Path, profiles: Profiles, process: str, pla: str) -> None:
-    """Diagnostics: run increasingly complete CLI calls and report each exit code."""
-    d = work / "ladder"
-    d.mkdir()
-    cube = d / "cube.stl"
-    cube_stl(cube)
-    m, p, f = (profiles.path("machine", MACHINE), profiles.path("process", process),
-               profiles.path("filament", pla))
-    steps = {
-        "plain": [str(cube), "--slice", "0", "--outputdir", str(d / "o1")],
-        "settings": ["--load-settings", f"{m};{p}", "--slice", "0", "--outputdir", str(d / "o2"), str(cube)],
-        "settings+fil": ["--load-settings", f"{m};{p}", "--load-filaments", str(f), "--slice", "0",
-                         "--outputdir", str(d / "o3"), str(cube)],
-        "+datadir": ["--datadir", str(d / "dd"), "--load-settings", f"{m};{p}", "--load-filaments", str(f),
-                     "--slice", "0", "--outputdir", str(d / "o4"), str(cube)],
-        "+export3mf+arrange": ["--load-settings", f"{m};{p}", "--load-filaments", str(f), "--arrange", "1",
-                               "--slice", "0", "--outputdir", str(d / "o5"), "--export-3mf", "r.3mf", str(cube)],
-    }
-    report = []
-    for name, args in steps.items():
-        out_dir = Path(args[args.index("--outputdir") + 1])
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for wrapper in (["xvfb-run", "-a"], []):
-            label = f"{name}/{'xvfb' if wrapper else 'nox'}"
-            try:
-                r = subprocess.run(wrapper + [ORCA_BIN] + args, capture_output=True, text=True, timeout=600,
-                                   env={**os.environ, "HOME": str(d)})
-                files = sorted(x.name for x in out_dir.iterdir())
-                lines = [l for l in (r.stdout + r.stderr).splitlines() if l.strip() and "[trace]" not in l]
-                report.append(f"{label}: exit {r.returncode} files={files} :: {' | '.join(lines[-3:])[-350:]}")
-            except subprocess.TimeoutExpired:
-                report.append(f"{label}: timeout")
-    annotate("warning", "CLI ladder", "\n".join(report))
-
-
 def main() -> int:
     probe = subprocess.run(["xvfb-run", "-a", ORCA_BIN, "--help"], capture_output=True, text=True, timeout=180)
     out = (probe.stdout + probe.stderr).strip()
@@ -111,7 +76,6 @@ def main() -> int:
     work = Path(tempfile.mkdtemp())
     jm = JobManager(work / "data", profiles)
     failures = 0
-    ladder(work, profiles, process, pla)
 
     def run(title, model: Path, req: dict, check):
         nonlocal failures
@@ -155,7 +119,7 @@ def main() -> int:
     out = work / "mk3mf"
     out.mkdir()
     cmd = ["xvfb-run", "-a", ORCA_BIN, "--datadir", str(work / "orca"),
-           "--load-settings", f"{profiles.path('machine', MACHINE)};{profiles.path('process', process)}",
+           "--load-settings", f"{profiles.path('machine', MACHINE)};{jm.process_file(out, process, MACHINE)}",
            "--load-filaments", f"{fil};{fil}", "--load-filament-ids", "1,2", "--arrange", "1",
            "--outputdir", str(out), "--export-3mf", "two_colour.3mf", str(a), str(b)]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)

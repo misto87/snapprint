@@ -214,10 +214,22 @@ class JobManager:
         target.write_text(json.dumps(data), encoding="utf-8")
         return target
 
+    def process_file(self, workdir: Path, process: str, machine: str) -> Path:
+        """Process profile plus the machine's nozzle_diameter.
+
+        The CLI runs normalize_fdm() on the process file alone and dereferences
+        nozzle_diameter whenever wipe_tower_filament is set (segfault otherwise).
+        The value is identical to the machine profile's, so nothing changes."""
+        data = self.profiles.load("process", process)
+        data["nozzle_diameter"] = self.profiles.load("machine", machine)["nozzle_diameter"]
+        target = workdir / "process.json"
+        target.write_text(json.dumps(data), encoding="utf-8")
+        return target
+
     def build_command(self, job: dict, workdir: Path) -> list:
         model = next(workdir.glob("model.*"))
         machine = self.profiles.path("machine", job["machine"])
-        process = self.profiles.path("process", job["process"])
+        process = self.process_file(workdir, job["process"], job["machine"])
         fil_paths = []
         if job["kind"] == "stl":
             # One filament per toolhead up to the chosen one; the object is bound to

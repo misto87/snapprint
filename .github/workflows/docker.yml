@@ -46,9 +46,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Crash diagnostics
-        run: docker run --rm --user root -v "$PWD/tests:/dbg-tests:ro" snapprint:test bash /dbg-tests/debug_crash.sh
-
       - name: Slicing smoke test
         shell: bash
         run: |
