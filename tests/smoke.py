@@ -116,11 +116,53 @@ def gdb_backtrace(title: str, jm: JobManager, job: dict) -> None:
     annotate("warning", f"gdb {title}", "\n".join(frames[:30]) or (r.stdout + r.stderr)[-2000:])
 
 
+def thumb_probe() -> None:
+    """Diagnostics: which way of launching the CLI gets a working GLFW context."""
+    appdir = Path(ORCA_BIN).parent
+    binary = next(p for p in (appdir / "bin").iterdir() if os.access(p, os.X_OK))
+    apprun = (appdir / "AppRun").read_text(errors="replace")
+    annotate("notice", "AppRun", apprun[:1500])
+    prof = Profiles()
+    process = prof.default_process(MACHINE)
+    d = Path(tempfile.mkdtemp())
+    cube_stl(d / "c.stl")
+    pf = d / "p.json"
+    data = prof.load("process", process)
+    data["nozzle_diameter"] = prof.load("machine", MACHINE)["nozzle_diameter"]
+    pf.write_text(json.dumps(data))
+    args = ["--load-settings", f"{prof.path('machine', MACHINE)};{pf}",
+            "--load-filaments", str(prof.path("filament", prof.index["filaments"][0]["name"])),
+            "--slice", "0", "--export-3mf", "r.3mf", str(d / "c.stl")]
+    libdirs = ":".join(sorted({str(p.parent) for p in appdir.rglob("*.so*")}))
+    variants = {
+        "apprun": ([str(appdir / "AppRun")], {}),
+        "bin+libs": ([str(binary)], {"LD_LIBRARY_PATH": libdirs}),
+        "bin+libs+sysfirst": ([str(binary)], {"LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:" + libdirs}),
+        "apprun+glx": ([str(appdir / "AppRun")], {"__GLX_VENDOR_LIBRARY_NAME": "mesa", "LIBGL_ALWAYS_SOFTWARE": "1",
+                                                   "MESA_GL_VERSION_OVERRIDE": "3.3"}),
+    }
+    report = []
+    for name, (cmd, extra) in variants.items():
+        out = d / name
+        out.mkdir()
+        r = subprocess.run(["xvfb-run", "-a", "-s", "-screen 0 1280x1024x24"] + cmd + args[:-1]
+                           + ["--outputdir", str(out), args[-1]],
+                           capture_output=True, text=True, timeout=600, env={**os.environ, **extra, "HOME": str(d)})
+        lines = [l[-160:] for l in (r.stdout + r.stderr).splitlines()
+                 if re.search(r"glfw|opengl|GLX|thumbnail", l, re.I)][:4]
+        pngs = []
+        if (out / "r.3mf").exists():
+            pngs = [n for n in zipfile.ZipFile(out / "r.3mf").namelist() if n.endswith(".png")]
+        report.append(f"{name}: exit {r.returncode} pngs={pngs} :: " + " | ".join(lines))
+    annotate("warning", "Thumbnail probe", "\n".join(report))
+
+
 def main() -> int:
     gl = subprocess.run(["xvfb-run", "-a", "-s", "-screen 0 1280x1024x24", "sh", "-c",
                          "glxinfo -B 2>&1 | grep -E 'renderer|OpenGL version|direct rendering' || true"],
                         capture_output=True, text=True, timeout=120)
     annotate("notice", "OpenGL under Xvfb", (gl.stdout + gl.stderr).strip()[:600] or "no output")
+    thumb_probe()
     probe = subprocess.run(["xvfb-run", "-a", ORCA_BIN, "--help"], capture_output=True, text=True, timeout=180)
     out = (probe.stdout + probe.stderr).strip()
     annotate("notice" if probe.returncode == 0 else "warning", "Orca CLI --help",
