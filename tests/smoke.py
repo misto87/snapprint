@@ -185,7 +185,10 @@ def main() -> int:
             problems.append("official start gcode missing")
         thumb = jm.thumbnail_path(gcode.parent.parent.name)
         if not thumb or thumb.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
-            problems.append("no PNG thumbnail")
+            r3 = gcode.parent / "result.3mf"
+            pngs = [n for n in zipfile.ZipFile(r3).namelist() if n.endswith(".png")] if r3.exists() else "no result.3mf"
+            heads = [l for l in text.splitlines()[:60] if "thumbnail" in l.lower()][:5]
+            problems.append(f"no PNG thumbnail (3mf pngs: {pngs}; gcode thumb lines: {heads})")
         return "; ".join(problems) or None
     run("STL with settings overrides", cube, {
         "filaments": [{"name": pla, "overrides": {"nozzle_temperature": "215"}}], "toolhead": 0,

@@ -231,11 +231,20 @@ class JobManager:
                     cur.append(line[1:].strip())
                 elif i > 5000 and best:
                     break
-        if not best:
-            return None
-        import base64
-        target.write_bytes(base64.b64decode(best[1]))
-        return target
+        if best:
+            import base64
+            target.write_bytes(base64.b64decode(best[1]))
+            return target
+        # The CLI often embeds no thumbnail in the G-code but renders plate images into the 3MF.
+        result_3mf = gcode.parent / "result.3mf"
+        if result_3mf.exists():
+            with zipfile.ZipFile(result_3mf) as zf:
+                names = zf.namelist()
+                for cand in ("Metadata/plate_1.png", "Metadata/top_1.png", "Metadata/plate_no_light_1.png"):
+                    if cand in names:
+                        target.write_bytes(zf.read(cand))
+                        return target
+        return None
 
     def gcode_path(self, job_id: str) -> Path:
         return self.jobs_dir / job_id / "out" / "result.gcode"
