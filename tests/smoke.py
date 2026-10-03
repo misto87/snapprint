@@ -2,6 +2,7 @@
 
 Writes GitHub Actions annotations so results are visible without log access.
 """
+import json
 import os
 import re
 import shutil
@@ -39,6 +40,50 @@ def cube_stl(path: Path, size=20.0, x0=0.0) -> None:
         lines += [" endloop", "endfacet"]
     lines.append("endsolid cube")
     path.write_text("\n".join(lines))
+
+
+def painted_cube_3mf(path: Path, size=20.0) -> None:
+    """Bambu/Orca-style 3MF: one cube, base filament 1, top face painted with filament 2
+    (paint_color "8" = leaf with state 2)."""
+    s, c = size, 135.0
+    v = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]
+    faces = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4),
+             (1, 2, 6), (1, 6, 5), (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7)]
+    verts = "".join(f'<vertex x="{x - s / 2}" y="{y - s / 2}" z="{z}"/>' for x, y, z in v)
+    tris = "".join(f'<triangle v1="{a}" v2="{b}" v3="{cc}"' + (' paint_color="8"' if i in (2, 3) else "") + "/>"
+                   for i, (a, b, cc) in enumerate(faces))
+    model = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+             '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
+             '<metadata name="Application">BambuStudio-02.01.00.59</metadata>'
+             '<metadata name="BambuStudio:3mfVersion">1</metadata>'
+             f'<resources><object id="1" type="model"><mesh><vertices>{verts}</vertices>'
+             f'<triangles>{tris}</triangles></mesh></object></resources>'
+             f'<build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 {c} {c} 0" printable="1"/></build></model>')
+    settings = ('<?xml version="1.0" encoding="UTF-8"?>\n<config><object id="1">'
+                '<metadata key="name" value="painted_cube"/><metadata key="extruder" value="1"/>'
+                '<part id="1" subtype="normal_part"><metadata key="name" value="painted_cube"/></part>'
+                '</object></config>')
+    project = {"filament_colour": ["#E72F1D", "#1E88E5"], "filament_type": ["PLA", "PLA"]}
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml",
+                   '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
+        z.writestr("_rels/.rels",
+                   '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Target="/3D/3dmodel.model" Id="rel-1" '
+                   'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+        z.writestr("3D/3dmodel.model", model)
+        z.writestr("Metadata/model_settings.config", settings)
+        z.writestr("Metadata/project_settings.config", json.dumps(project))
+
+
+def gcode_facts(gcode: Path) -> str:
+    text = gcode.read_text(errors="replace")
+    objs = re.findall(r"^EXCLUDE_OBJECT_DEFINE NAME=(\S+)", text, re.M)
+    used = re.findall(r"^; filament used \[mm\] = (.*)$", text, re.M)
+    m109 = sorted(set(re.findall(r"^M109 S\d+ T(\d+)", text, re.M)))
+    return f"objects={objs} filament_mm={used} M109_tools={m109}"
 
 
 class Upload:
@@ -164,10 +209,23 @@ def main() -> int:
                             info.append(f"{label} files: {[n for n in zf.namelist() if n.startswith(('3D/', 'Metadata/model'))]}")
                         info.append(f"{label} extruder keys: " + " ".join(
                             re.findall(r'<(?:object|part|volume)[^>]*>|key="extruder" value="\d+"', cfg))[:900])
-                return f"expected T0 and T1, got {sorted(tc)}\n" + "\n".join(info)
+                return f"expected T0 and T1, got {sorted(tc)} · {gcode_facts(gcode)}\n" + "\n".join(info)
             return None
         run("3MF two colours", mf, {"filaments": [{"name": pla, "color": "#E72F1D"},
                                                    {"name": pla, "color": "#1E88E5"}]}, check_3mf)
+
+    painted = work / "painted_cube.3mf"
+    painted_cube_3mf(painted)
+
+    def check_painted(gcode, meta):
+        if not meta.get("painted") or len(meta["slots"]) != 2:
+            return f"inspect: painted={meta.get('painted')} slots={meta['slots']}"
+        tc = toolchanges(gcode)
+        if not {"0", "1"} <= tc:
+            return f"expected T0 and T1, got {sorted(tc)} · {gcode_facts(gcode)}"
+        return None
+    run("3MF painted", painted, {"filaments": [{"name": pla, "color": "#E72F1D"},
+                                               {"name": pla, "color": "#1E88E5"}]}, check_painted)
 
     if failures:
         annotate("error", "Smoke test", f"{failures} failure(s)")
