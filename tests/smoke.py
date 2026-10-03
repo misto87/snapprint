@@ -103,7 +103,7 @@ def main() -> int:
             text = gcode.read_text(errors="replace")
             if "PRINT_START" not in text:
                 return "official start gcode missing"
-            if f"T{head}" not in toolchanges(gcode) and f"T{head}_TEMP" not in text:
+            if str(head) not in toolchanges(gcode):
                 return f"expected toolhead T{head}, got {sorted(toolchanges(gcode))}"
             return None
         return check

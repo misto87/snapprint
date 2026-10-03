@@ -254,6 +254,10 @@ class JobManager:
         ]
         if job["kind"] == "stl":
             cmd += ["--load-filament-ids", str(job["toolhead"] + 1)]
+        else:
+            # The CLI reports an internal version (01.10.x) older than the 3MF files
+            # written by current Snapmaker Orca / Bambu Studio releases.
+            cmd += ["--allow-newer-file", "1"]
         if job["arrange"]:
             cmd += ["--arrange", "1"]
         cmd.append(str(model))
