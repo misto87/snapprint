@@ -62,6 +62,20 @@ def toolchanges(gcode: Path) -> set:
     return set(re.findall(r"^T(\d+)\s*$", gcode.read_text(errors="replace"), re.M))
 
 
+def gdb_backtrace(title: str, jm: JobManager, job: dict) -> None:
+    """Re-run a failed job's CLI call under gdb (CI debug step, runs as root)."""
+    workdir = jm.jobs_dir / job["id"]
+    cmd = jm.build_command(job, workdir)
+    args = cmd[cmd.index(ORCA_BIN) + 1:]
+    binary = next(p for p in (Path(ORCA_BIN).parent / "bin").iterdir() if os.access(p, os.X_OK))
+    libs = sorted({str(p.parent) for p in Path(ORCA_BIN).parent.rglob("*.so*")})
+    env = {**os.environ, "LD_LIBRARY_PATH": ":".join(libs), "LC_ALL": "C"}
+    r = subprocess.run(["xvfb-run", "-a", "gdb", "-q", "-batch", "-ex", "run", "-ex", "bt", "--args", str(binary)]
+                       + args, capture_output=True, text=True, timeout=900, env=env, cwd=workdir)
+    frames = [l[:230] for l in (r.stdout + r.stderr).splitlines() if re.match(r"#\d+|.*SIG", l)]
+    annotate("warning", f"gdb {title}", "\n".join(frames[:30]) or (r.stdout + r.stderr)[-2000:])
+
+
 def main() -> int:
     probe = subprocess.run(["xvfb-run", "-a", ORCA_BIN, "--help"], capture_output=True, text=True, timeout=180)
     out = (probe.stdout + probe.stderr).strip()
@@ -85,6 +99,8 @@ def main() -> int:
         if job["state"] != "done":
             failures += 1
             annotate("error", title, f"{job['message']}\n{jm.log_tail(job['id'], 60)}")
+            if os.environ.get("SNAPPRINT_GDB") and shutil.which("gdb"):
+                gdb_backtrace(title, jm, jm.get(job["id"]))
             return None
         gcode = jm.gcode_path(job["id"])
         problem = check(gcode, meta)
@@ -111,7 +127,8 @@ def main() -> int:
     job = run("STL on T1", cube, {"filaments": [{"name": pla, "color": "#FF0000"}], "toolhead": 0}, check_stl(0))
     if job:
         lines = jm.gcode_path(job["id"]).read_text(errors="replace").splitlines()
-        hits = [l for l in lines[:300] + lines[-300:] if l.startswith(";") and re.search(r"time|filament used|weight", l, re.I)]
+        hits = [l for l in lines if l.startswith(";")
+                and re.search(r"estimated|total filament|printing time|filament used \[", l, re.I)]
         annotate("notice", "G-code summary lines", "\n".join(hits[:25]))
     run("STL on T3", cube, {"filaments": [{"name": pla}], "toolhead": 2}, check_stl(2))
 

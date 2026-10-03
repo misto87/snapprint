@@ -57,6 +57,12 @@ jobs:
           fi
           exit $rc
 
+      - name: Debug failed slices with gdb
+        if: failure()
+        run: >
+          docker run --rm --user root snapprint:test bash -c
+          "apt-get update -qq >/dev/null && apt-get install -y -qq gdb >/dev/null 2>&1 && SNAPPRINT_GDB=1 python3 tests/smoke.py" || true
+
       - name: Web server starts
         run: |
           docker run -d --name web -p 8080:8080 snapprint:test
