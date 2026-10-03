@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -154,7 +155,16 @@ def main() -> int:
                 return f"expected 2 slots, inspect found {meta['slots']}"
             tc = toolchanges(gcode)
             if not {"0", "1"} <= tc:
-                return f"expected T0 and T1, got {sorted(tc)}"
+                info = []
+                for label, path in (("source", mf), ("prepared", gcode.parent.parent / "prepared.3mf")):
+                    if path.exists():
+                        with zipfile.ZipFile(path) as zf:
+                            cfg = zf.read("Metadata/model_settings.config").decode(errors="replace") \
+                                if "Metadata/model_settings.config" in zf.namelist() else ""
+                            info.append(f"{label} files: {[n for n in zf.namelist() if n.startswith(('3D/', 'Metadata/model'))]}")
+                        info.append(f"{label} extruder keys: " + " ".join(
+                            re.findall(r'<(?:object|part|volume)[^>]*>|key="extruder" value="\d+"', cfg))[:900])
+                return f"expected T0 and T1, got {sorted(tc)}\n" + "\n".join(info)
             return None
         run("3MF two colours", mf, {"filaments": [{"name": pla, "color": "#E72F1D"},
                                                    {"name": pla, "color": "#1E88E5"}]}, check_3mf)
