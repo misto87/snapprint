@@ -112,8 +112,7 @@ def main() -> int:
     if job:
         lines = jm.gcode_path(job["id"]).read_text(errors="replace").splitlines()
         hits = [l for l in lines[:300] + lines[-300:] if l.startswith(";") and re.search(r"time|filament used|weight", l, re.I)]
-        annotate("notice", "G-code summary lines", "
-".join(hits[:25]))
+        annotate("notice", "G-code summary lines", "\n".join(hits[:25]))
     run("STL on T3", cube, {"filaments": [{"name": pla}], "toolhead": 2}, check_stl(2))
 
     # Build a two-colour 3MF with the Orca CLI (object 1 -> filament 1, object 2 -> filament 2).
