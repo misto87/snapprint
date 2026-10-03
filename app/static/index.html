@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="SnapPrint">
+  <meta name="theme-color" content="#111418">
+  <title>SnapPrint</title>
+  <link rel="icon" href="static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="static/icon.svg">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <header>
+    <h1>SnapPrint</h1>
+    <span id="printer-pill" class="pill">…</span>
+    <button id="btn-settings" class="icon-btn" aria-label="Einstellungen">⚙︎</button>
+  </header>
+
+  <main>
+    <section class="card" id="card-printer">
+      <div class="card-head">
+        <h2>Snapmaker U1</h2>
+        <span id="printer-state" class="muted"></span>
+      </div>
+      <div id="print-progress" class="progress hidden"><div></div></div>
+      <div id="toolheads" class="toolheads"></div>
+      <div id="bed" class="muted small"></div>
+    </section>
+
+    <section class="card" id="card-model">
+      <h2>1 · Modell</h2>
+      <label class="file-drop">
+        <input type="file" id="file" accept=".3mf,.stl,model/3mf,model/stl,application/octet-stream">
+        <span id="file-label">3MF oder STL auswählen</span>
+      </label>
+      <p id="model-info" class="muted small"></p>
+    </section>
+
+    <section class="card hidden" id="card-settings">
+      <h2>2 · Profil &amp; Material</h2>
+      <label>Düse
+        <select id="sel-machine"></select>
+      </label>
+      <label>Druckprofil
+        <select id="sel-process"></select>
+      </label>
+      <div id="slots"></div>
+      <label class="check hidden" id="row-arrange">
+        <input type="checkbox" id="chk-arrange"> Modelle neu auf der Platte anordnen
+      </label>
+      <label class="hidden" id="row-plate">Platte
+        <select id="sel-plate"></select>
+      </label>
+      <button id="btn-slice" class="primary">Slicen</button>
+    </section>
+
+    <section class="card hidden" id="card-result">
+      <h2>3 · Ergebnis</h2>
+      <div id="job-status"></div>
+      <div id="job-actions" class="hidden">
+        <dl id="job-stats" class="stats"></dl>
+        <label>Dateiname auf dem U1
+          <input type="text" id="inp-filename" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </label>
+        <div class="row">
+          <a id="btn-download" class="button" href="#">G-Code laden</a>
+          <button id="btn-send" class="primary">An U1 senden</button>
+        </div>
+        <div id="start-box" class="hidden">
+          <p class="small">Die Datei <b id="sent-name"></b> liegt auf dem U1. Der Druck startet erst nach deiner Bestätigung.</p>
+          <button id="btn-start" class="danger">Druck starten …</button>
+        </div>
+      </div>
+      <pre id="job-log" class="log hidden"></pre>
+    </section>
+  </main>
+
+  <dialog id="dlg-confirm">
+    <form method="dialog">
+      <h3>Druck wirklich starten?</h3>
+      <p id="confirm-text"></p>
+      <ul id="confirm-heads" class="small"></ul>
+      <p class="small muted">Platte frei und richtige Filamente geladen?</p>
+      <div class="row">
+        <button value="cancel">Abbrechen</button>
+        <button value="ok" class="danger">Jetzt drucken</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-settings">
+    <form method="dialog">
+      <h3>Einstellungen</h3>
+      <label>IP-Adresse des U1
+        <input type="text" id="inp-host" inputmode="decimal" placeholder="192.168.178.43" autocomplete="off">
+      </label>
+      <label>Moonraker-Port
+        <input type="number" id="inp-port" value="7125">
+      </label>
+      <p id="settings-info" class="small muted"></p>
+      <div class="row">
+        <button value="cancel">Schließen</button>
+        <button value="save" class="primary">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="static/app.js"></script>
+</body>
+</html>
