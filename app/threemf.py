@@ -14,6 +14,7 @@ import zipfile
 from pathlib import Path
 
 MODEL_SETTINGS = "Metadata/model_settings.config"
+PROJECT_SETTINGS = "Metadata/project_settings.config"
 PLATE_GAP = 1.0 / 5.0  # LOGICAL_PART_PLATE_GAP in Bambu/Orca
 
 
@@ -53,8 +54,26 @@ def _shift_transform(transform: str, dx: float, dy: float) -> str:
     return " ".join(f"{v:.9g}" for v in m)
 
 
-def prepare(src: Path, dst: Path, plate: int = 1) -> dict:
+def _fix_colours(raw: bytes, colours: list) -> bytes:
+    """One filament_colour entry per filament. The CLI clamps object filament
+    assignments beyond the length of filament_colour back to filament 1."""
+    try:
+        cfg = json.loads(raw)
+    except ValueError:
+        return raw
+    count = max(len(cfg.get("filament_settings_id") or []), len(colours))
+    current = list(cfg.get("filament_colour") or [])
+    fixed = []
+    for i in range(count):
+        chosen = colours[i] if i < len(colours) else ""
+        fixed.append(chosen or (current[i] if i < len(current) and current[i] else "#FFFFFF"))
+    cfg["filament_colour"] = fixed
+    return json.dumps(cfg, indent=4).encode("utf-8")
+
+
+def prepare(src: Path, dst: Path, plate: int = 1, colours=None) -> dict:
     """Write a CLI-safe copy of `src` to `dst`. Returns info for logging."""
+    colours = [c if re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", c or "") else "" for c in (colours or [])]
     with zipfile.ZipFile(src) as zin:
         names = zin.namelist()
         model_cfg = zin.read(MODEL_SETTINGS).decode("utf-8", "replace") if MODEL_SETTINGS in names else ""
@@ -83,7 +102,9 @@ def prepare(src: Path, dst: Path, plate: int = 1) -> dict:
         with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
             for info in zin.infolist():
                 data = zin.read(info.filename)
-                if info.filename == MODEL_SETTINGS:
+                if info.filename == PROJECT_SETTINGS:
+                    data = _fix_colours(data, colours)
+                elif info.filename == MODEL_SETTINGS:
                     text = re.sub(r"\s*<plate>.*?</plate>", "", model_cfg, flags=re.S)
                     data = text.encode("utf-8")
                 elif info.filename == root and (keep is not None or offset != (0.0, 0.0)):

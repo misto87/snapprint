@@ -70,7 +70,7 @@ def inspect_model(path: Path) -> dict:
     painted = bool(painted_states)
     used |= painted_states
     used = used or {1}
-    count = max(len(colours), max(used), 1)
+    count = max(len(colours), len(ids), max(used), 1)
     slots = []
     for i in range(count):
         slots.append({
@@ -237,7 +237,7 @@ class JobManager:
         model = next(workdir.glob("model.*"))
         if job["kind"] == "3mf":
             prepared = workdir / "prepared.3mf"
-            info = threemf.prepare(model, prepared, job["plate"])
+            info = threemf.prepare(model, prepared, job["plate"], [f.get("color", "") for f in job["filaments"]])
             log.info("job %s: 3mf prepared %s", job["id"], info)
             model = prepared
         machine = self.profiles.path("machine", job["machine"])
