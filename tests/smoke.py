@@ -42,40 +42,34 @@ def cube_stl(path: Path, size=20.0, x0=0.0) -> None:
     path.write_text("\n".join(lines))
 
 
-def painted_cube_3mf(path: Path, size=20.0) -> None:
-    """Bambu/Orca-style 3MF: one cube, base filament 1, top face painted with filament 2
-    (paint_color "8" = leaf with state 2)."""
-    s, c = size, 135.0
-    v = [(0, 0, 0), (s, 0, 0), (s, s, 0), (0, s, 0), (0, 0, s), (s, 0, s), (s, s, s), (0, s, s)]
-    faces = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4),
-             (1, 2, 6), (1, 6, 5), (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7)]
-    verts = "".join(f'<vertex x="{x - s / 2}" y="{y - s / 2}" z="{z}"/>' for x, y, z in v)
-    tris = "".join(f'<triangle v1="{a}" v2="{b}" v3="{cc}"' + (' paint_color="8"' if i in (2, 3) else "") + "/>"
-                   for i, (a, b, cc) in enumerate(faces))
-    model = ('<?xml version="1.0" encoding="UTF-8"?>\n'
-             '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
-             '<metadata name="Application">BambuStudio-02.01.00.59</metadata>'
-             '<metadata name="BambuStudio:3mfVersion">1</metadata>'
-             f'<resources><object id="1" type="model"><mesh><vertices>{verts}</vertices>'
-             f'<triangles>{tris}</triangles></mesh></object></resources>'
-             f'<build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 {c} {c} 0" printable="1"/></build></model>')
-    settings = ('<?xml version="1.0" encoding="UTF-8"?>\n<config><object id="1">'
-                '<metadata key="name" value="painted_cube"/><metadata key="extruder" value="1"/>'
-                '<part id="1" subtype="normal_part"><metadata key="name" value="painted_cube"/></part>'
-                '</object></config>')
-    project = {"filament_colour": ["#E72F1D", "#1E88E5"], "filament_type": ["PLA", "PLA"]}
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml",
-                   '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-                   '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
-        z.writestr("_rels/.rels",
-                   '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                   '<Relationship Target="/3D/3dmodel.model" Id="rel-1" '
-                   'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
-        z.writestr("3D/3dmodel.model", model)
-        z.writestr("Metadata/model_settings.config", settings)
-        z.writestr("Metadata/project_settings.config", json.dumps(project))
+def derive_project(src: Path, dst: Path, extruder: int, paint_state=None) -> None:
+    """Copy an Orca project 3MF: drop sliced G-code, set every object's filament to
+    `extruder` and optionally paint the top-face triangles with `paint_state`."""
+    code = format(paint_state << 2, "X") if paint_state else None
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            name = info.filename
+            if re.match(r"Metadata/plate_\d+\.gcode", name):
+                continue
+            data = zin.read(name)
+            if name == "Metadata/model_settings.config":
+                text = re.sub(r'key="extruder" value="\d+"', f'key="extruder" value="{extruder}"', data.decode())
+                data = text.encode()
+            elif code and name.endswith(".model") and b"<mesh" in data:
+                text = data.decode()
+                zs = [float(z) for z in re.findall(r'<vertex [^>]*z="([-\d.eE+]+)"', text)]
+                top = max(zs)
+                verts = [abs(z - top) < 1e-4 for z in zs]
+
+                def paint(m):
+                    tri = m.group(0)
+                    idx = [int(i) for i in re.findall(r'v[123]="(\d+)"', tri)]
+                    if len(idx) == 3 and all(verts[i] for i in idx) and "paint_color" not in tri:
+                        tri = tri.replace("/>", f' paint_color="{code}"/>')
+                    return tri
+                text = re.sub(r"<triangle [^>]*/>", paint, text)
+                data = text.encode()
+            zout.writestr(info, data)
 
 
 def gcode_facts(gcode: Path) -> str:
@@ -176,56 +170,34 @@ def main() -> int:
         hits = [l for l in lines if l.startswith(";")
                 and re.search(r"estimated|total filament|printing time|filament used \[", l, re.I)]
         annotate("notice", "G-code summary lines", "\n".join(hits[:25]))
-    run("STL on T3", cube, {"filaments": [{"name": pla}], "toolhead": 2}, check_stl(2))
+    t3 = run("STL on T3", cube, {"filaments": [{"name": pla}], "toolhead": 2}, check_stl(2))
 
-    # Build a two-colour 3MF with the Orca CLI (object 1 -> filament 1, object 2 -> filament 2).
-    a, b = work / "a.stl", work / "b.stl"
-    cube_stl(a, x0=0)
-    cube_stl(b, x0=40)
-    fil = profiles.path("filament", pla)
-    out = work / "mk3mf"
-    out.mkdir()
-    cmd = ["xvfb-run", "-a", ORCA_BIN, "--datadir", str(work / "orca"),
-           "--load-settings", f"{profiles.path('machine', MACHINE)};{jm.process_file(out, process, MACHINE)}",
-           "--load-filaments", f"{fil};{fil}", "--load-filament-ids", "1,2", "--arrange", "1",
-           "--outputdir", str(out), "--export-3mf", "two_colour.3mf", str(a), str(b)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    mf = out / "two_colour.3mf"
-    if not mf.exists():
+    # Realistic 3MF projects: derived from the project 3MF Snapmaker Orca itself wrote
+    # for the T3 job (full project_settings, plate data, 3 filament slots).
+    source = jm.jobs_dir / t3["id"] / "out" / "result.3mf" if t3 else None
+    if not source or not source.exists():
         failures += 1
-        annotate("error", "Build test 3MF", (proc.stdout + proc.stderr)[-3000:])
+        annotate("error", "3MF tests", "no result.3mf from the STL job to derive projects from")
     else:
-        def check_3mf(gcode, meta):
-            if len(meta["slots"]) != 2:
-                return f"expected 2 slots, inspect found {meta['slots']}"
-            tc = toolchanges(gcode)
-            if not {"0", "1"} <= tc:
-                info = []
-                for label, path in (("source", mf), ("prepared", gcode.parent.parent / "prepared.3mf")):
-                    if path.exists():
-                        with zipfile.ZipFile(path) as zf:
-                            cfg = zf.read("Metadata/model_settings.config").decode(errors="replace") \
-                                if "Metadata/model_settings.config" in zf.namelist() else ""
-                            info.append(f"{label} files: {[n for n in zf.namelist() if n.startswith(('3D/', 'Metadata/model'))]}")
-                        info.append(f"{label} extruder keys: " + " ".join(
-                            re.findall(r'<(?:object|part|volume)[^>]*>|key="extruder" value="\d+"', cfg))[:900])
-                return f"expected T0 and T1, got {sorted(tc)} · {gcode_facts(gcode)}\n" + "\n".join(info)
-            return None
-        run("3MF two colours", mf, {"filaments": [{"name": pla, "color": "#E72F1D"},
-                                                   {"name": pla, "color": "#1E88E5"}]}, check_3mf)
+        fils = [{"name": pla, "color": c} for c in ("#E72F1D", "#1E88E5", "#FCE94F")]
 
-    painted = work / "painted_cube.3mf"
-    painted_cube_3mf(painted)
+        def expect(tools, painted=None):
+            def check(gcode, meta):
+                if painted is not None and meta.get("painted") != painted:
+                    return f"inspect painted={meta.get('painted')} slots={len(meta['slots'])}"
+                tc = toolchanges(gcode)
+                if tc != set(tools):
+                    return f"expected tools {sorted(tools)}, got {sorted(tc)} · {gcode_facts(gcode)}"
+                return None
+            return check
 
-    def check_painted(gcode, meta):
-        if not meta.get("painted") or len(meta["slots"]) != 2:
-            return f"inspect: painted={meta.get('painted')} slots={meta['slots']}"
-        tc = toolchanges(gcode)
-        if not {"0", "1"} <= tc:
-            return f"expected T0 and T1, got {sorted(tc)} · {gcode_facts(gcode)}"
-        return None
-    run("3MF painted", painted, {"filaments": [{"name": pla, "color": "#E72F1D"},
-                                               {"name": pla, "color": "#1E88E5"}]}, check_painted)
+        painted = work / "painted_project.3mf"
+        derive_project(source, painted, extruder=1, paint_state=2)
+        run("3MF painted (base T1, top T2)", painted, {"filaments": fils}, expect({"0", "1"}, painted=True))
+
+        per_object = work / "object_project.3mf"
+        derive_project(source, per_object, extruder=2, paint_state=None)
+        run("3MF object on T2", per_object, {"filaments": fils}, expect({"1"}, painted=False))
 
     if failures:
         annotate("error", "Smoke test", f"{failures} failure(s)")
