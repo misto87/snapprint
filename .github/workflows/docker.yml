@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          docker run --rm --tmpfs /data:uid=1000,gid=1000 snapprint:test python3 tests/smoke.py 2>&1 | tee smoke.log
+          docker run --rm -e GITHUB_ACTIONS=true --tmpfs /data:uid=1000,gid=1000 snapprint:test python3 tests/smoke.py 2>&1 | tee smoke.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
             tail -c 3500 smoke.log | python3 -c 'import sys; d=sys.stdin.read(); print("::error title=smoke log tail::" + d.replace("%","%25").replace("\r","").replace("\n","%0A"))'
@@ -60,7 +60,7 @@ jobs:
       - name: Debug failed slices with gdb
         if: failure()
         run: >
-          docker run --rm --user root snapprint:test bash -c
+          docker run --rm -e GITHUB_ACTIONS=true --user root snapprint:test bash -c
           "apt-get update -qq >/dev/null && apt-get install -y -qq gdb >/dev/null 2>&1 && SNAPPRINT_GDB=1 python3 tests/smoke.py" || true
 
       - name: Web server starts
