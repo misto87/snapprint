@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import paint, threemf
 from .profiles import Profiles
+from .settings import Schema
 from .util import parse_gcode_stats, sanitize_gcode_name
 
 log = logging.getLogger("snapprint.slicer")
@@ -38,13 +39,15 @@ def inspect_model(path: Path) -> dict:
         raise ValueError("Die 3MF-Datei ist beschädigt")
     with zf:
         names = set(zf.namelist())
-        colours, types, ids = [], [], []
+        colours, types, ids, project = [], [], [], None
         if "Metadata/project_settings.config" in names:
             try:
                 cfg = json.loads(zf.read("Metadata/project_settings.config"))
                 colours = cfg.get("filament_colour") or []
                 types = cfg.get("filament_type") or []
                 ids = cfg.get("filament_settings_id") or []
+                if cfg.get("printer_model") == "Snapmaker U1":
+                    project = cfg
             except ValueError:
                 pass
         elif "Metadata/Slic3r_PE.config" in names:
@@ -81,17 +84,18 @@ def inspect_model(path: Path) -> dict:
         })
     # Filament n prints on toolhead Tn, so only filaments 1-4 may actually be used.
     return {"kind": "3mf", "slots": slots, "plates": plates, "painted": painted,
-            "too_many": max(used) > MAX_TOOLHEADS}
+            "too_many": max(used) > MAX_TOOLHEADS, "_project": project}
 
 
 class JobManager:
-    def __init__(self, data_dir: Path, profiles: Profiles):
+    def __init__(self, data_dir: Path, profiles: Profiles, schema: Schema = None):
         self.uploads = data_dir / "uploads"
         self.jobs_dir = data_dir / "jobs"
         self.orca_home = data_dir / "orca"
         for d in (self.uploads, self.jobs_dir, self.orca_home):
             d.mkdir(parents=True, exist_ok=True)
         self.profiles = profiles
+        self.schema = schema or Schema()
         self.jobs = {}
         self.lock = threading.Lock()
         self.pool = ThreadPoolExecutor(max_workers=1)
@@ -113,7 +117,9 @@ class JobManager:
         except ValueError:
             shutil.rmtree(folder, ignore_errors=True)
             raise
-        meta = {"upload_id": upload_id, "filename": filename, "created": time.time(), **info}
+        project = info.pop("_project", None)
+        meta = {"upload_id": upload_id, "filename": filename, "created": time.time(), **info,
+                "suggested": self._suggest(project) if project else None}
         (folder / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
         return meta
 
@@ -124,6 +130,23 @@ class JobManager:
         meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
         model = next(folder.glob("model.*"))
         return meta, model
+
+    def _suggest(self, project: dict) -> dict:
+        """Settings of a Snapmaker U1 project 3MF expressed as profile + overrides."""
+        machines = [m["name"] for m in self.profiles.index["machines"]]
+        machine = project.get("printer_settings_id")
+        if machine not in machines:
+            machine = next((m for m in machines if "(0.4 nozzle)" in m), machines[0])
+        wanted = project.get("print_settings_id", "")
+        process = ""
+        for p in self.profiles.index["processes"]:
+            if machine in p["compatible"] and (p["name"] == wanted or wanted in p.get("renamed_from", [])):
+                process = p["name"]
+                break
+        process = process or self.profiles.default_process(machine)
+        base = self.schema.values(self.profiles.load("process", process), "process")
+        return {"machine": machine, "process": process,
+                "process_overrides": self.schema.diff(base, project, "process")}
 
     # ---------- jobs ----------
     def submit(self, req: dict) -> dict:
@@ -145,8 +168,13 @@ class JobManager:
             toolhead = int(req.get("toolhead", 0))
             if not 0 <= toolhead < MAX_TOOLHEADS:
                 raise ValueError("Toolhead muss T1–T4 sein")
+        filaments = [{"name": f.get("name", ""), "color": f.get("color", ""),
+                      "overrides": f.get("overrides") or {}} for f in filaments]
         for f in filaments:
             self.profiles.check_compatible("filament", f["name"], machine)
+            self.schema.apply(self.profiles.load("filament", f["name"]), "filament", f["overrides"])
+        process_overrides = req.get("process_overrides") or {}
+        self.schema.apply(self.profiles.load("process", process), "process", process_overrides)
         plate = int(req.get("plate", 1))
         if not 1 <= plate <= meta["plates"]:
             raise ValueError("Ungültige Platte")
@@ -155,7 +183,8 @@ class JobManager:
         job = {
             "id": job_id, "state": "queued", "created": time.time(), "message": "",
             "upload_id": meta["upload_id"], "source_name": meta["filename"], "kind": meta["kind"],
-            "machine": machine, "process": process, "filaments": filaments, "toolhead": toolhead,
+            "machine": machine, "process": process, "process_overrides": process_overrides,
+            "filaments": filaments, "toolhead": toolhead,
             # Arranging 3MF projects hits another GUI-only code path in the CLI.
             "plate": plate, "arrange": meta["kind"] == "stl" and bool(req.get("arrange", True)),
             "gcode_name": sanitize_gcode_name(meta["filename"]), "stats": {}, "sent_as": None,
@@ -179,6 +208,34 @@ class JobManager:
             job = dict(self.jobs[job_id])
         (self.jobs_dir / job_id / "job.json").write_text(json.dumps(job), encoding="utf-8")
         return job
+
+    def thumbnail_path(self, job_id: str):
+        """Largest embedded slicer thumbnail of a finished job as PNG (cached)."""
+        target = self.jobs_dir / job_id / "out" / "thumbnail.png"
+        if target.exists():
+            return target
+        gcode = self.gcode_path(job_id)
+        if not gcode.exists():
+            return None
+        best, cur, size = None, None, 0
+        with open(gcode, "r", encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if line.startswith("; thumbnail begin"):
+                    m = re.match(r"; thumbnail begin (\d+)x(\d+)", line)
+                    cur, size = [], int(m.group(1)) * int(m.group(2)) if m else 0
+                elif line.startswith("; thumbnail end") and cur is not None:
+                    if best is None or size > best[0]:
+                        best = (size, "".join(cur))
+                    cur = None
+                elif cur is not None:
+                    cur.append(line[1:].strip())
+                elif i > 5000 and best:
+                    break
+        if not best:
+            return None
+        import base64
+        target.write_bytes(base64.b64decode(best[1]))
+        return target
 
     def gcode_path(self, job_id: str) -> Path:
         return self.jobs_dir / job_id / "out" / "result.gcode"
@@ -213,21 +270,21 @@ class JobManager:
             time.sleep(3600)
 
     # ---------- slicing ----------
-    def _filament_file(self, workdir: Path, idx: int, name: str, color: str) -> Path:
-        data = self.profiles.load("filament", name)
+    def _filament_file(self, workdir: Path, idx: int, name: str, color: str, overrides=None) -> Path:
+        data = self.schema.apply(self.profiles.load("filament", name), "filament", overrides or {})
         if re.fullmatch(r"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", color or ""):
             data["filament_colour"] = [color[:7].upper()]
         target = workdir / f"filament_{idx}.json"
         target.write_text(json.dumps(data), encoding="utf-8")
         return target
 
-    def process_file(self, workdir: Path, process: str, machine: str) -> Path:
+    def process_file(self, workdir: Path, process: str, machine: str, overrides=None) -> Path:
         """Process profile plus the machine's nozzle_diameter.
 
         The CLI runs normalize_fdm() on the process file alone and dereferences
         nozzle_diameter whenever wipe_tower_filament is set (segfault otherwise).
         The value is identical to the machine profile's, so nothing changes."""
-        data = self.profiles.load("process", process)
+        data = self.schema.apply(self.profiles.load("process", process), "process", overrides or {})
         data["nozzle_diameter"] = self.profiles.load("machine", machine)["nozzle_diameter"]
         target = workdir / "process.json"
         target.write_text(json.dumps(data), encoding="utf-8")
@@ -241,17 +298,17 @@ class JobManager:
             log.info("job %s: 3mf prepared %s", job["id"], info)
             model = prepared
         machine = self.profiles.path("machine", job["machine"])
-        process = self.process_file(workdir, job["process"], job["machine"])
+        process = self.process_file(workdir, job["process"], job["machine"], job.get("process_overrides"))
         fil_paths = []
         if job["kind"] == "stl":
             # One filament per toolhead up to the chosen one; the object is bound to
             # the chosen toolhead via --load-filament-ids, the others stay unused.
             f = job["filaments"][0]
-            fil = self._filament_file(workdir, 0, f["name"], f.get("color", ""))
+            fil = self._filament_file(workdir, 0, f["name"], f.get("color", ""), f.get("overrides"))
             fil_paths = [fil] * (job["toolhead"] + 1)
         else:
             for i, f in enumerate(job["filaments"]):
-                fil_paths.append(self._filament_file(workdir, i, f["name"], f.get("color", "")))
+                fil_paths.append(self._filament_file(workdir, i, f["name"], f.get("color", ""), f.get("overrides")))
         out = workdir / "out"
         out.mkdir(exist_ok=True)
         cmd = [

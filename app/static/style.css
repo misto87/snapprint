@@ -73,3 +73,47 @@ dialog h3 { margin: 0 0 8px; }
          background: var(--text); color: var(--bg); padding: 12px 14px; border-radius: 12px; z-index: 20;
          max-width: 608px; margin: 0 auto; }
 .toast.err { background: var(--danger); color: #fff; }
+
+.secondary { width: 100%; margin-top: 4px; }
+.link-button { display: block; text-align: center; margin-top: 12px; color: var(--accent); font-size: 15px; text-decoration: none; }
+.note { font-size: 13px; background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 8px 10px; border-radius: 10px; }
+.note button { padding: 2px 8px; font-size: 13px; margin-left: 6px; }
+.quick { display: grid; grid-template-columns: 1fr; gap: 0 14px; }
+@media (min-width: 560px) { .quick { grid-template-columns: 1fr 1fr; } }
+.quick .field { margin: 6px 0; }
+.thumb { display: block; width: 160px; height: 160px; object-fit: contain; margin: 0 auto 10px; border-radius: 12px; background: var(--bg); }
+.slot-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+.slot-actions button { padding: 6px 10px; font-size: 13px; }
+/* settings sheet */
+dialog.sheet { width: 100vw; max-width: 720px; height: 100dvh; max-height: 100dvh; margin: 0 auto; padding: 0;
+  border-radius: 0; display: none; flex-direction: column; }
+dialog.sheet[open] { display: flex; }
+@media (min-width: 760px) { dialog.sheet { height: 92dvh; margin-top: 4dvh; border-radius: 16px; } }
+.sheet-head { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 14px 8px; }
+.sheet-title { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.sheet-title b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mode-toggle { display: flex; gap: 6px; align-items: center; margin: 0; color: var(--text); }
+#sheet-search { margin: 0 14px; width: auto; }
+.tabs { display: flex; gap: 6px; overflow-x: auto; padding: 10px 14px; scrollbar-width: none; }
+.tabs button { white-space: nowrap; padding: 7px 12px; font-size: 14px; border-radius: 99px; }
+.tabs button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.sheet-body { flex: 1; overflow-y: auto; padding: 0 14px 20px; -webkit-overflow-scrolling: touch; }
+.sheet-body h4 { margin: 18px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.sheet-foot { display: flex; gap: 8px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+.sheet-foot button { flex: 1; font-size: 14px; padding: 10px 6px; }
+.field { border-bottom: 1px solid var(--line); padding: 8px 0; }
+.field.changed { border-left: 3px solid var(--accent); padding-left: 8px; }
+.field-row { display: flex; align-items: center; gap: 10px; }
+.field-label { flex: 1; font-size: 14px; color: var(--text); }
+.field-label .info { border: none; background: none; padding: 0 4px; color: var(--muted); font-size: 13px; }
+.field-ctrl { display: flex; align-items: center; gap: 4px; max-width: 55%; }
+.field-ctrl input[type=text] { width: 96px; margin: 0; padding: 7px 8px; text-align: right; }
+.field-ctrl select { margin: 0; padding: 7px 8px; max-width: 100%; }
+.field-ctrl .unit { font-size: 12px; color: var(--muted); min-width: 18px; }
+.field-ctrl .reset { border: none; background: none; padding: 2px 4px; color: var(--accent); font-size: 16px; }
+.field-tip { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.switch { appearance: none; width: 44px; height: 26px; border-radius: 13px; background: var(--line); position: relative; margin: 0; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch:checked { background: var(--accent); }
+.switch:checked::after { left: 21px; }
+.empty { color: var(--muted); text-align: center; padding: 30px 0; }

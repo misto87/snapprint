@@ -168,13 +168,34 @@ def main() -> int:
             return None
         return check
 
-    job = run("STL on T1", cube, {"filaments": [{"name": pla, "color": "#FF0000"}], "toolhead": 0}, check_stl(0))
-    if job:
-        lines = jm.gcode_path(job["id"]).read_text(errors="replace").splitlines()
-        hits = [l for l in lines if l.startswith(";")
-                and re.search(r"estimated|total filament|printing time|filament used \[", l, re.I)]
-        annotate("notice", "G-code summary lines", "\n".join(hits[:25]))
+    run("STL on T1", cube, {"filaments": [{"name": pla, "color": "#FF0000"}], "toolhead": 0}, check_stl(0))
     run("STL on T3", cube, {"filaments": [{"name": pla}], "toolhead": 2}, check_stl(2))
+
+    # Settings overrides from the web UI must reach the G-code.
+    def check_overrides(gcode, _meta):
+        text = gcode.read_text(errors="replace")
+        want = {"layer_height": "0.16", "sparse_infill_density": "40%", "ironing_type": "top",
+                "wall_loops": "4", "nozzle_temperature": "215"}
+        problems = []
+        for key, val in want.items():
+            m = re.search(rf"^; {key} = (.*)$", text, re.M)
+            if not m or val not in m.group(1).split(","):
+                problems.append(f"{key}: want {val}, got {m.group(1) if m else 'missing'}")
+        if "PRINT_START" not in text:
+            problems.append("official start gcode missing")
+        thumb = jm.thumbnail_path(gcode.parent.parent.name)
+        if not thumb or thumb.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+            problems.append("no PNG thumbnail")
+        return "; ".join(problems) or None
+    run("STL with settings overrides", cube, {
+        "filaments": [{"name": pla, "overrides": {"nozzle_temperature": "215"}}], "toolhead": 0,
+        "process_overrides": {"layer_height": "0.16", "sparse_infill_density": "40", "ironing_type": "top",
+                              "wall_loops": "4"}}, check_overrides)
+
+    schema = jm.schema
+    n = {k: sum(len(g["options"]) for p in schema.data[k] for g in p["groups"]) for k in ("process", "filament")}
+    annotate("notice", "Settings schema", f"{n['process']} process / {n['filament']} filament options, "
+             f"pages: {[p['title'] for p in schema.data['process']]}")
 
     # Realistic 3MF projects: let Snapmaker Orca write a project 3MF with three
     # different filament presets (full project_settings, plate data), then derive cases.

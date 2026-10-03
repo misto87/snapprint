@@ -1,6 +1,12 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-const state = { profiles: null, upload: null, printer: null, job: null, sentAs: null };
+const state = {
+  profiles: null, upload: null, printer: null, job: null, sentAs: null,
+  schema: null, presets: [], baseCache: {},
+  procOverrides: {},      // process option overrides (key -> value)
+  filOverrides: {},       // slot index -> filament option overrides
+  projectOverrides: null, // overrides suggested by a U1 project 3MF
+};
 
 async function api(path, opts = {}) {
   const res = await fetch("api/" + path, opts);
@@ -66,12 +72,34 @@ async function refreshPrinter() {
 function machineName() { return $("sel-machine").value; }
 function compatible(list) { return list.filter((p) => p.compatible.includes(machineName())); }
 
-function fillProcesses() {
+function fillProcesses(wanted) {
   const m = state.profiles.machines.find((x) => x.name === machineName());
   const sel = $("sel-process");
-  const prev = sel.value;
-  sel.replaceChildren(...compatible(state.profiles.processes).map((p) => el("option", { value: p.name }, p.name)));
+  const prev = wanted || sel.value;
+  const sys = el("optgroup", { label: "Snapmaker-Profile" },
+    ...compatible(state.profiles.processes).map((p) => el("option", { value: p.name }, p.name)));
+  const own = state.presets.filter((p) => p.kind === "process" && state.profiles.processes.some(
+    (q) => q.name === p.base && q.compatible.includes(machineName())));
+  sel.replaceChildren(sys);
+  if (own.length) sel.append(el("optgroup", { label: "Eigene Profile" },
+    ...own.map((p) => el("option", { value: "preset:" + p.id }, "★ " + p.name))));
   sel.value = [...sel.options].some((o) => o.value === prev) ? prev : m.default_process;
+}
+
+/** Base system process for the current selection (resolves user presets). */
+function processBase() {
+  const v = $("sel-process").value;
+  if (v.startsWith("preset:")) return state.presets.find((p) => "preset:" + p.id === v)?.base || "";
+  return v;
+}
+
+function onProcessChange() {
+  const v = $("sel-process").value;
+  const preset = v.startsWith("preset:") && state.presets.find((p) => "preset:" + p.id === v);
+  state.procOverrides = preset ? { ...preset.overrides } : {};
+  state.projectOverrides = null;
+  renderProjectNote();
+  renderQuick();
 }
 
 function guessFilament(loaded, slotType) {
@@ -89,12 +117,42 @@ function guessFilament(loaded, slotType) {
   return tries.find((t) => names.includes(t)) || names[0];
 }
 
-function filamentSelect(id, selected) {
+function filamentSelect(id, selected, slot) {
   const sel = el("select", { id });
-  for (const f of compatible(state.profiles.filaments)) sel.append(el("option", { value: f.name }, f.name));
+  sel.append(el("optgroup", { label: "Snapmaker-Profile" },
+    ...compatible(state.profiles.filaments).map((f) => el("option", { value: f.name }, f.name))));
+  const own = state.presets.filter((p) => p.kind === "filament" && compatible(state.profiles.filaments).some((f) => f.name === p.base));
+  if (own.length) sel.append(el("optgroup", { label: "Eigene Profile" },
+    ...own.map((p) => el("option", { value: "preset:" + p.id }, "★ " + p.name))));
   sel.value = selected;
-  sel.addEventListener("change", renderSlotWarnings);
+  sel.addEventListener("change", () => {
+    const preset = sel.value.startsWith("preset:") && state.presets.find((p) => "preset:" + p.id === sel.value);
+    state.filOverrides[slot] = preset ? { ...preset.overrides } : {};
+    updateSlotButton(slot);
+    renderSlotWarnings();
+  });
   return sel;
+}
+
+/** System filament profile behind a slot's selection (resolves user presets). */
+function filamentBase(slot) {
+  const sel = $(`fil-${slot}`);
+  if (!sel) return "";
+  if (sel.value.startsWith("preset:")) return state.presets.find((p) => "preset:" + p.id === sel.value)?.base || "";
+  return sel.value;
+}
+
+function slotButton(slot) {
+  const b = el("button", { id: `fil-btn-${slot}`, type: "button" }, "");
+  b.addEventListener("click", () => openSheet("filament", slot));
+  return el("div", { className: "slot-actions" }, b);
+}
+
+function updateSlotButton(slot) {
+  const b = $(`fil-btn-${slot}`);
+  if (!b) return;
+  const n = Object.keys(state.filOverrides[slot] || {}).length;
+  b.textContent = n ? `Filament anpassen · ${n} geändert` : "Filament anpassen";
 }
 
 function headFor(i) {
@@ -120,8 +178,8 @@ function renderSlots() {
     box.append(el("div", { className: "slot" },
       el("div", { className: "slot-head" }, "Einfarbig (STL)"),
       el("label", {}, "Toolhead", thSel),
-      el("label", {}, "Material", filamentSelect("fil-0", guessFilament(heads[0] && heads[0].filament, ""))),
-      el("div", { className: "warn", id: "warn-0" })));
+      el("label", {}, "Material", filamentSelect("fil-0", guessFilament(heads[0] && heads[0].filament, ""), 0)),
+      el("div", { className: "warn", id: "warn-0" }), slotButton(0)));
   } else {
     up.slots.forEach((s, i) => {
       if (!s.used) return;
@@ -131,10 +189,13 @@ function renderSlots() {
           el("span", { className: "swatch", style: `background:${s.color || "transparent"}` }),
           `Farbe ${i + 1} → T${i + 1}`,
           el("span", { className: "muted small" }, s.type ? `(${s.type})` : "")),
-        el("label", {}, "Material", filamentSelect(`fil-${i}`, guessFilament(h, s.type))),
-        el("div", { className: "warn", id: `warn-${i}` })));
+        el("label", {}, "Material", filamentSelect(`fil-${i}`, guessFilament(h, s.type), i)),
+        el("div", { className: "warn", id: `warn-${i}` }), slotButton(i)));
     });
   }
+  state.filOverrides = {};
+  const n = up.kind === "stl" ? 1 : up.slots.length;
+  for (let i = 0; i < n; i++) updateSlotButton(i);
   renderSlotWarnings();
 }
 
@@ -145,7 +206,7 @@ function renderSlotWarnings() {
     const w = $(`warn-${i}`);
     const sel = $(`fil-${i}`);
     if (!w || !sel) continue;
-    const prof = state.profiles.filaments.find((f) => f.name === sel.value);
+    const prof = state.profiles.filaments.find((f) => f.name === filamentBase(i));
     const head = state.printer && state.printer.toolheads[headFor(i)];
     let msg = "";
     if (head) {
@@ -184,7 +245,19 @@ async function onFile() {
     $("chk-arrange").checked = true;
     $("row-plate").classList.toggle("hidden", up.plates <= 1);
     $("sel-plate").replaceChildren(...Array.from({ length: up.plates }, (_, i) => el("option", { value: i + 1 }, `Platte ${i + 1}`)));
+    if (up.suggested) {
+      $("sel-machine").value = up.suggested.machine;
+      fillProcesses(up.suggested.process);
+      state.procOverrides = { ...up.suggested.process_overrides };
+      state.projectOverrides = { ...up.suggested.process_overrides };
+    } else {
+      fillProcesses();
+      state.procOverrides = {};
+      state.projectOverrides = null;
+    }
+    renderProjectNote();
     renderSlots();
+    renderQuick();
     $("card-settings").classList.remove("hidden");
   } catch (e) {
     $("file-label").textContent = "3MF oder STL auswählen";
@@ -203,10 +276,12 @@ async function onSlice() {
     let color = up.kind === "3mf" ? up.slots[i].color : "";
     const head = state.printer && state.printer.toolheads[headFor(i)];
     if (!color && head && head.filament.loaded) color = head.filament.color;
-    filaments.push({ name: sel.value, color });
+    const slot = $(`fil-${i}`) ? i : firstUsed;
+    filaments.push({ name: filamentBase(slot), color, overrides: state.filOverrides[slot] || {} });
   }
   const req = {
-    upload_id: up.upload_id, machine: machineName(), process: $("sel-process").value, filaments,
+    upload_id: up.upload_id, machine: machineName(), process: processBase(), filaments,
+    process_overrides: state.procOverrides,
     arrange: $("chk-arrange").checked, plate: Number($("sel-plate").value || 1),
   };
   if (up.kind === "stl") req.toolhead = Number($("sel-toolhead").value);
@@ -253,6 +328,10 @@ async function pollJob() {
   $("job-stats").replaceChildren(...rows.filter((r) => r[1]).flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]));
   $("inp-filename").value = job.gcode_name;
   $("btn-download").href = `api/jobs/${job.id}/gcode`;
+  const img = $("job-thumb");
+  img.classList.add("hidden");
+  img.onload = () => img.classList.remove("hidden");
+  img.src = `api/jobs/${job.id}/thumbnail.png`;
   $("job-actions").classList.remove("hidden");
 }
 
@@ -321,6 +400,241 @@ async function onSettingsClose() {
   } catch (e) { toast(e.message, true); }
 }
 
+// ---------- Settings (Orca options) ----------
+const QUICK_KEYS = ["layer_height", "sparse_infill_density", "wall_loops", "sparse_infill_pattern",
+                    "enable_support", "support_type", "brim_type", "seam_position"];
+const PERCENT_TYPES = new Set(["coPercent", "coPercents"]);
+const sheet = { kind: "process", slot: 0, base: {}, overrides: {}, page: 0 };
+
+async function baseValues(kind, name) {
+  const key = kind + "|" + name;
+  if (!state.baseCache[key]) {
+    state.baseCache[key] = await api(`profile-values?kind=${kind}&name=${encodeURIComponent(name)}`);
+  }
+  return state.baseCache[key];
+}
+
+function shown(opt, v) {
+  let x = Array.isArray(v) ? v[0] : v;
+  if (x === undefined || x === null || x === "nil") return "";
+  x = String(x);
+  if (PERCENT_TYPES.has(opt.type) && x.endsWith("%")) x = x.slice(0, -1);
+  return x;
+}
+
+function same(a, b) {
+  const na = Number(a), nb = Number(b);
+  if (a !== "" && b !== "" && !isNaN(na) && !isNaN(nb)) return na === nb;
+  return String(a) === String(b);
+}
+
+function optLabel(opt) {
+  return opt.full_label && opt.label && opt.full_label !== opt.label && opt.label.length < 22
+    ? `${opt.full_label} – ${opt.label}` : (opt.full_label || opt.label || "");
+}
+
+/** One editable option row. `ov` is mutated in place; onChange runs after every edit. */
+function renderField(key, base, ov, onChange, compact = false) {
+  const opt = state.schema.options[key];
+  const baseShown = shown(opt, base[key]);
+  const box = el("div", { className: "field" });
+  const ctrl = el("div", { className: "field-ctrl" });
+  const reset = el("button", { className: "reset", type: "button", title: "Zurücksetzen" }, "↺");
+  let input;
+
+  const current = () => (key in ov ? shown(opt, ov[key]) : baseShown);
+  const commit = (value) => {
+    if (same(value, baseShown)) delete ov[key];
+    else ov[key] = PERCENT_TYPES.has(opt.type) && value !== "" && !String(value).endsWith("%") ? value + "%" : value;
+    refresh();
+    onChange();
+  };
+  const refresh = () => {
+    const changed = key in ov;
+    box.classList.toggle("changed", changed);
+    reset.classList.toggle("hidden", !changed);
+  };
+
+  const t = opt.type.replace(/s$/, "");
+  if (t === "coBool") {
+    input = el("input", { type: "checkbox", className: "switch" });
+    input.checked = current() === "1";
+    input.addEventListener("change", () => commit(input.checked ? "1" : "0"));
+  } else if (t === "coEnum" && opt.enum) {
+    input = el("select", {}, ...opt.enum.map((e) => el("option", { value: e.value }, e.label)));
+    input.value = current();
+    input.addEventListener("change", () => commit(input.value));
+  } else {
+    const numeric = ["coFloat", "coInt", "coPercent"].includes(t);
+    input = el("input", { type: "text", inputMode: numeric ? "decimal" : "text", autocomplete: "off",
+                          placeholder: baseShown === "" ? "Standard" : "" });
+    input.value = current();
+    input.addEventListener("change", () => commit(input.value.trim().replace(",", ".")));
+  }
+  reset.addEventListener("click", () => {
+    delete ov[key];
+    if (input.type === "checkbox") input.checked = baseShown === "1"; else input.value = baseShown;
+    refresh();
+    onChange();
+  });
+  ctrl.append(input);
+  if (opt.sidetext && t !== "coBool" && t !== "coEnum") ctrl.append(el("span", { className: "unit" }, opt.sidetext));
+  ctrl.append(reset);
+
+  const label = el("div", { className: "field-label" }, optLabel(opt));
+  if (opt.tooltip && !compact) {
+    const tip = el("div", { className: "field-tip hidden" }, opt.tooltip);
+    const info = el("button", { className: "info", type: "button", "aria-label": "Info" }, "ⓘ");
+    info.addEventListener("click", () => tip.classList.toggle("hidden"));
+    label.append(info);
+    box.append(el("div", { className: "field-row" }, label, ctrl), tip);
+  } else {
+    box.append(el("div", { className: "field-row" }, label, ctrl));
+  }
+  refresh();
+  return box;
+}
+
+async function renderQuick() {
+  const box = $("quick");
+  const btn = $("btn-all-settings");
+  const n = Object.keys(state.procOverrides).length;
+  btn.textContent = n ? `Alle Druckeinstellungen · ${n} geändert` : "Alle Druckeinstellungen";
+  if (!state.schema || !processBase()) { box.replaceChildren(); return; }
+  try {
+    const base = await baseValues("process", processBase());
+    const keys = QUICK_KEYS.filter((k) => state.schema.options[k]);
+    box.replaceChildren(...keys.map((k) => renderField(k, base, state.procOverrides, () => {
+      const c = Object.keys(state.procOverrides).length;
+      btn.textContent = c ? `Alle Druckeinstellungen · ${c} geändert` : "Alle Druckeinstellungen";
+    }, true)));
+  } catch (e) { box.replaceChildren(); }
+}
+
+function renderProjectNote() {
+  const note = $("project-note");
+  const n = state.projectOverrides ? Object.keys(state.projectOverrides).length : 0;
+  note.classList.toggle("hidden", !n);
+  if (!n) return;
+  const drop = el("button", { type: "button" }, "Verwerfen");
+  drop.addEventListener("click", () => {
+    for (const k of Object.keys(state.projectOverrides)) delete state.procOverrides[k];
+    state.projectOverrides = null;
+    renderProjectNote();
+    renderQuick();
+  });
+  note.replaceChildren(`${n} Einstellungen aus der 3MF übernommen.`, drop);
+}
+
+async function openSheet(kind, slot = 0) {
+  sheet.kind = kind;
+  sheet.slot = slot;
+  sheet.page = 0;
+  const name = kind === "process" ? processBase() : filamentBase(slot);
+  if (kind === "filament") state.filOverrides[slot] = state.filOverrides[slot] || {};
+  sheet.overrides = kind === "process" ? state.procOverrides : state.filOverrides[slot];
+  try { sheet.base = await baseValues(kind, name); } catch (e) { toast(e.message, true); return; }
+  $("sheet-title").textContent = kind === "process" ? "Druckeinstellungen" : `Filament · Farbe ${slot + 1}`;
+  $("sheet-sub").textContent = name;
+  $("sheet-search").value = "";
+  renderSheet();
+  $("dlg-sheet").showModal();
+}
+
+function renderSheet() {
+  const pages = state.schema[sheet.kind];
+  const expert = $("sheet-expert").checked;
+  const query = $("sheet-search").value.trim().toLowerCase();
+  const visible = (key) => {
+    const o = state.schema.options[key];
+    if (key in sheet.overrides) return true;
+    if (query) return (optLabel(o) + " " + (o.tooltip || "") + " " + key).toLowerCase().includes(query);
+    return expert ? o.mode !== "develop" : o.mode === "simple";
+  };
+  $("sheet-tabs").replaceChildren(...pages.map((p, i) => {
+    const b = el("button", { type: "button", className: i === sheet.page && !query ? "active" : "" }, p.title);
+    b.addEventListener("click", () => { sheet.page = i; $("sheet-search").value = ""; renderSheet(); });
+    return b;
+  }));
+  const onChange = () => { updateSheetCount(); };
+  const body = $("sheet-body");
+  body.replaceChildren();
+  const list = query ? pages : [pages[sheet.page]];
+  for (const page of list) {
+    for (const group of page.groups) {
+      const keys = group.options.filter(visible);
+      if (!keys.length) continue;
+      body.append(el("h4", {}, query ? `${page.title} · ${group.title}` : group.title));
+      for (const k of keys) body.append(renderField(k, sheet.base, sheet.overrides, onChange));
+    }
+  }
+  if (!body.children.length) {
+    body.append(el("p", { className: "empty" }, query ? "Keine passende Einstellung." :
+      "Keine Einstellungen in dieser Ansicht – „Experte“ einschalten für alle Optionen."));
+  }
+  body.scrollTop = 0;
+  updateSheetCount();
+}
+
+function updateSheetCount() {
+  const n = Object.keys(sheet.overrides).length;
+  $("sheet-reset").disabled = !n;
+  $("sheet-reset").textContent = n ? `Zurücksetzen (${n})` : "Zurücksetzen";
+}
+
+function closeSheet() {
+  $("dlg-sheet").close();
+  if (sheet.kind === "process") {
+    if (state.projectOverrides) {
+      for (const k of Object.keys(state.projectOverrides)) {
+        if (!(k in state.procOverrides)) delete state.projectOverrides[k];
+      }
+    }
+    renderProjectNote();
+    renderQuick();
+  } else {
+    updateSlotButton(sheet.slot);
+  }
+}
+
+async function saveSheetPreset() {
+  const isProc = sheet.kind === "process";
+  const base = isProc ? processBase() : filamentBase(sheet.slot);
+  const name = prompt(`Name für das eigene ${isProc ? "Druck" : "Filament"}profil (Basis: ${base})`);
+  if (!name) return;
+  try {
+    const preset = await api("presets", jsonOpts("POST", {
+      name, kind: sheet.kind, base, machine: machineName(), overrides: sheet.overrides }));
+    state.presets = await api("presets");
+    if (isProc) {
+      fillProcesses("preset:" + preset.id);
+    } else {
+      const sel = $(`fil-${sheet.slot}`);
+      const fresh = filamentSelect(`fil-${sheet.slot}`, "preset:" + preset.id, sheet.slot);
+      sel.replaceWith(fresh);
+    }
+    toast(`Profil „${preset.name}“ gespeichert`);
+  } catch (e) { toast(e.message, true); }
+}
+
+function initSheet() {
+  $("sheet-close").addEventListener("click", closeSheet);
+  $("sheet-done").addEventListener("click", closeSheet);
+  $("dlg-sheet").addEventListener("cancel", (e) => { e.preventDefault(); closeSheet(); });
+  $("sheet-expert").addEventListener("change", renderSheet);
+  let timer;
+  $("sheet-search").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(renderSheet, 200); });
+  $("sheet-reset").addEventListener("click", () => {
+    for (const k of Object.keys(sheet.overrides)) delete sheet.overrides[k];
+    renderSheet();
+  });
+  $("sheet-save").addEventListener("click", saveSheetPreset);
+  try { $("sheet-expert").checked = localStorage.getItem("snapprint.expert") === "1"; } catch (_) { /* ignore */ }
+  $("sheet-expert").addEventListener("change", () => {
+    try { localStorage.setItem("snapprint.expert", $("sheet-expert").checked ? "1" : "0"); } catch (_) { /* ignore */ }
+  });
+}
+
 // ---------- Init ----------
 async function init() {
   $("file").addEventListener("change", onFile);
@@ -330,9 +644,12 @@ async function init() {
   $("dlg-confirm").addEventListener("close", onConfirmClose);
   $("btn-settings").addEventListener("click", openSettings);
   $("dlg-settings").addEventListener("close", onSettingsClose);
-  $("sel-machine").addEventListener("change", () => { fillProcesses(); if (state.upload) renderSlots(); });
+  $("sel-machine").addEventListener("change", () => { fillProcesses(); onProcessChange(); if (state.upload) renderSlots(); });
+  $("sel-process").addEventListener("change", onProcessChange);
+  $("btn-all-settings").addEventListener("click", () => openSheet("process"));
+  initSheet();
   try {
-    state.profiles = await api("profiles");
+    [state.profiles, state.schema, state.presets] = await Promise.all([api("profiles"), api("schema"), api("presets")]);
     const sel = $("sel-machine");
     sel.replaceChildren(...state.profiles.machines.map((m) => el("option", { value: m.name }, `${m.nozzle} mm`)));
     sel.value = state.profiles.machines.find((m) => m.nozzle === "0.4")?.name || sel.options[0].value;

@@ -46,6 +46,9 @@
       <label>Druckprofil
         <select id="sel-process"></select>
       </label>
+      <p id="project-note" class="note hidden"></p>
+      <div id="quick" class="quick"></div>
+      <button id="btn-all-settings" class="secondary">Alle Druckeinstellungen</button>
       <div id="slots"></div>
       <label class="check hidden" id="row-arrange">
         <input type="checkbox" id="chk-arrange"> Modelle neu auf der Platte anordnen
@@ -60,14 +63,13 @@
       <h2>3 · Ergebnis</h2>
       <div id="job-status"></div>
       <div id="job-actions" class="hidden">
+        <img id="job-thumb" class="thumb hidden" alt="Vorschau des geslicten Modells">
         <dl id="job-stats" class="stats"></dl>
         <label>Dateiname auf dem U1
           <input type="text" id="inp-filename" autocomplete="off" autocapitalize="off" spellcheck="false">
         </label>
-        <div class="row">
-          <a id="btn-download" class="button" href="#">G-Code laden</a>
-          <button id="btn-send" class="primary">An U1 senden</button>
-        </div>
+        <button id="btn-send" class="primary">An U1 senden</button>
+        <a id="btn-download" class="link-button" href="#">G-Code herunterladen</a>
         <div id="start-box" class="hidden">
           <p class="small">Die Datei <b id="sent-name"></b> liegt auf dem U1. Der Druck startet erst nach deiner Bestätigung.</p>
           <button id="btn-start" class="danger">Druck starten …</button>
@@ -88,6 +90,22 @@
         <button value="ok" class="danger">Jetzt drucken</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="dlg-sheet" class="sheet">
+    <div class="sheet-head">
+      <button id="sheet-close" class="icon-btn" aria-label="Schließen">✕</button>
+      <div class="sheet-title"><b id="sheet-title"></b><span id="sheet-sub" class="muted small"></span></div>
+      <label class="mode-toggle small"><input type="checkbox" id="sheet-expert"> Experte</label>
+    </div>
+    <input type="search" id="sheet-search" placeholder="Einstellung suchen …" autocomplete="off">
+    <div id="sheet-tabs" class="tabs"></div>
+    <div id="sheet-body" class="sheet-body"></div>
+    <div class="sheet-foot">
+      <button id="sheet-reset">Alles zurücksetzen</button>
+      <button id="sheet-save">Als Profil speichern</button>
+      <button id="sheet-done" class="primary">Fertig</button>
+    </div>
   </dialog>
 
   <dialog id="dlg-settings">

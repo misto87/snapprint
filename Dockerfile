@@ -39,6 +39,16 @@ RUN set -eux; \
     python3 /opt/snapprint/tools/build_profiles.py "$PROFILES" /opt/snapprint/profiles; \
     echo "${ORCA_VERSION}" > /opt/snapprint/profiles/ORCA_VERSION
 
+# Settings schema (labels, tooltips, layout, German translation) from the matching Orca sources.
+RUN set -eux; \
+    SRC="https://raw.githubusercontent.com/Snapmaker/OrcaSlicer/${ORCA_TAG}"; \
+    mkdir -p /tmp/orca-src; cd /tmp/orca-src; \
+    curl -fsSL -o PrintConfig.cpp "$SRC/src/libslic3r/PrintConfig.cpp"; \
+    curl -fsSL -o Tab.cpp "$SRC/src/slic3r/GUI/Tab.cpp"; \
+    curl -fsSL -o de.po "$SRC/localization/i18n/de/Snapmaker_Orca_de.po"; \
+    python3 /opt/snapprint/tools/build_schema.py PrintConfig.cpp Tab.cpp de.po /opt/snapprint/profiles/schema.json; \
+    rm -rf /tmp/orca-src
+
 COPY app /opt/snapprint/app
 COPY tests /opt/snapprint/tests
 

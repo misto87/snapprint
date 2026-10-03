@@ -11,6 +11,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 
 from .moonraker import Moonraker, PrinterError
 from .profiles import Profiles
+from .settings import Presets, Schema
 from .slicer import JobManager
 from .util import sanitize_gcode_name
 
@@ -26,7 +27,9 @@ app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 profiles = Profiles()
-jobs = JobManager(DATA_DIR, profiles)
+schema = Schema()
+presets = Presets(DATA_DIR / "presets.json")
+jobs = JobManager(DATA_DIR, profiles, schema)
 
 _settings_lock = threading.Lock()
 SETTINGS_FILE = DATA_DIR / "config.json"
@@ -89,6 +92,41 @@ def get_profiles():
     return jsonify(profiles.public())
 
 
+@app.get("/api/schema")
+def get_schema():
+    resp = jsonify(schema.data)
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
+@app.get("/api/profile-values")
+def profile_values():
+    """Resolved values of all editable options for one system profile."""
+    kind = request.args.get("kind", "")
+    if kind not in ("process", "filament"):
+        raise ValueError("Ungültiger Profiltyp")
+    return jsonify(schema.values(profiles.load(kind, request.args.get("name", "")), kind))
+
+
+@app.get("/api/presets")
+def list_presets():
+    return jsonify(presets.list())
+
+
+@app.post("/api/presets")
+def save_preset():
+    return jsonify(presets.save(profiles, schema, request.get_json(force=True) or {})), 201
+
+
+@app.delete("/api/presets/<preset_id>")
+def delete_preset(preset_id):
+    try:
+        presets.delete(preset_id)
+    except KeyError:
+        return error("Profil nicht gefunden", 404)
+    return jsonify({"deleted": preset_id})
+
+
 @app.get("/api/settings")
 def get_settings():
     return jsonify(load_settings())
@@ -145,6 +183,18 @@ def download_gcode(job_id):
         return error("Kein G-Code vorhanden", 404)
     return send_file(path, as_attachment=True, download_name=job["gcode_name"],
                      mimetype="text/x-gcode")
+
+
+@app.get("/api/jobs/<job_id>/thumbnail.png")
+def job_thumbnail(job_id):
+    try:
+        jobs.get(job_id)
+    except KeyError:
+        return error("Job nicht gefunden", 404)
+    path = jobs.thumbnail_path(job_id)
+    if not path:
+        return error("Kein Vorschaubild", 404)
+    return send_file(path, mimetype="image/png", max_age=3600)
 
 
 @app.post("/api/jobs/<job_id>/send")
