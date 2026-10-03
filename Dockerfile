@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 gstreamer1.0-plugins-base \
         libsecret-1-0 libnotify4 libsm6 libxkbcommon0 libdbus-1-3 fonts-dejavu-core \
         libglx-mesa0 libxrandr2 libxinerama1 libxcursor1 libxi6 libxxf86vm1 libx11-xcb1 mesa-utils \
+        weston libwayland-client0 libwayland-egl1 libwayland-cursor0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and unpack the official Snapmaker Orca AppImage (no FUSE needed at runtime).

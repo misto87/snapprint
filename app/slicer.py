@@ -22,6 +22,41 @@ log = logging.getLogger("snapprint.slicer")
 ORCA_BIN = os.environ.get("SNAPPRINT_ORCA_BIN", "/opt/orca/AppRun")
 SLICE_TIMEOUT = int(os.environ.get("SNAPPRINT_SLICE_TIMEOUT", "1200"))
 MAX_TOOLHEADS = 4
+WAYLAND_SOCKET = "snapprint-wayland"
+_wayland = {"proc": None, "lock": threading.Lock()}
+
+
+def wayland_env() -> dict:
+    """Environment for a headless Weston compositor (started once, on demand).
+
+    The GLFW inside Snapmaker Orca is built for Wayland only; without a Wayland
+    display the CLI skips thumbnail rendering (no preview on the U1 screen).
+    Rendering itself uses OSMesa, so no GPU is needed. Returns {} if Weston is
+    unavailable, in which case slicing still works without thumbnails."""
+    runtime = Path(os.environ.get("SNAPPRINT_XDG_RUNTIME", "/tmp/snapprint-xdg"))
+    env = {"XDG_RUNTIME_DIR": str(runtime), "WAYLAND_DISPLAY": WAYLAND_SOCKET}
+    with _wayland["lock"]:
+        proc = _wayland["proc"]
+        if proc and proc.poll() is None and (runtime / WAYLAND_SOCKET).exists():
+            return env
+        if not shutil.which("weston"):
+            return {}
+        runtime.mkdir(parents=True, exist_ok=True)
+        os.chmod(runtime, 0o700)
+        logf = open(runtime / "weston.log", "w")
+        _wayland["proc"] = subprocess.Popen(
+            ["weston", "--backend=headless", f"--socket={WAYLAND_SOCKET}", "--idle-time=0"],
+            stdout=logf, stderr=subprocess.STDOUT, env={**os.environ, "XDG_RUNTIME_DIR": str(runtime)})
+        for _ in range(50):
+            if (runtime / WAYLAND_SOCKET).exists():
+                log.info("headless weston started for thumbnail rendering")
+                return env
+            if _wayland["proc"].poll() is not None:
+                break
+            time.sleep(0.2)
+        log.warning("weston did not start; slicing without thumbnails: %s",
+                    (runtime / "weston.log").read_text(errors="replace")[-500:])
+        return {}
 JOB_TTL = 48 * 3600
 
 
@@ -321,7 +356,6 @@ class JobManager:
         out = workdir / "out"
         out.mkdir(exist_ok=True)
         cmd = [
-            "xvfb-run", "-a", "-s", "-screen 0 1280x1024x24",
             ORCA_BIN,
             "--datadir", str(self.orca_home),
             "--load-settings", f"{machine};{process}",
@@ -351,7 +385,7 @@ class JobManager:
             with open(logfile, "w", encoding="utf-8") as lf:
                 proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, cwd=workdir,
                                       timeout=SLICE_TIMEOUT,
-                                      env={**os.environ, "HOME": str(self.orca_home)})
+                                      env={**os.environ, **wayland_env(), "HOME": str(self.orca_home)})
             gcode = self._collect_gcode(workdir / "out", self.get(job_id)["plate"])
             if not gcode:
                 raise RuntimeError(self._error_text(workdir, proc.returncode))
