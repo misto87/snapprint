@@ -134,6 +134,10 @@ def main() -> int:
     def run(title, model: Path, req: dict, check):
         nonlocal failures
         meta = jm.save_upload(model.name, Upload(model))
+        if meta["kind"] == "3mf":
+            fl = req["filaments"]
+            req = {**req, "filaments": [fl[i % len(fl)] for i in range(len(meta["slots"]))]}
+            annotate("notice", f"{title} inspect", f"slots={meta['slots']} painted={meta['painted']} plates={meta['plates']}")
         job = jm.submit({"upload_id": meta["upload_id"], "machine": MACHINE, "process": process, **req})
         job = wait(jm, job["id"])
         if job["state"] != "done":
