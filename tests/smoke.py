@@ -137,9 +137,7 @@ def thumb_probe() -> None:
     variants = {
         "apprun": ([str(appdir / "AppRun")], {}),
         "bin+libs": ([str(binary)], {"LD_LIBRARY_PATH": libdirs}),
-        "bin+libs+sysfirst": ([str(binary)], {"LD_LIBRARY_PATH": "/usr/lib/x86_64-linux-gnu:" + libdirs}),
-        "apprun+glx": ([str(appdir / "AppRun")], {"__GLX_VENDOR_LIBRARY_NAME": "mesa", "LIBGL_ALWAYS_SOFTWARE": "1",
-                                                   "MESA_GL_VERSION_OVERRIDE": "3.3"}),
+        "apprun+x11": ([str(appdir / "AppRun")], {"XDG_SESSION_TYPE": "x11", "GDK_BACKEND": "x11"}),
     }
     report = []
     for name, (cmd, extra) in variants.items():
@@ -149,7 +147,7 @@ def thumb_probe() -> None:
                            + ["--outputdir", str(out), args[-1]],
                            capture_output=True, text=True, timeout=600, env={**os.environ, **extra, "HOME": str(d)})
         lines = [l[-160:] for l in (r.stdout + r.stderr).splitlines()
-                 if re.search(r"glfw|opengl|GLX|thumbnail", l, re.I)][:4]
+                 if re.search(r"glfw|opengl|GLX|description|osmesa|wayland|x11", l, re.I)][:6]
         pngs = []
         if (out / "r.3mf").exists():
             pngs = [n for n in zipfile.ZipFile(out / "r.3mf").namelist() if n.endswith(".png")]
